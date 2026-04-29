@@ -1,3 +1,35 @@
+# netbox-mcp-server-extended
+
+> **Write-enabled fork of [`netboxlabs/netbox-mcp-server`](https://github.com/netboxlabs/netbox-mcp-server).**
+> Tracks upstream automatically via weekly CI rebase. All original read-only tools are preserved unchanged.
+
+## Extended tools (this fork)
+
+Three new tools, each with `dry_run=True` by default:
+
+| Tool | Description |
+|------|-------------|
+| `netbox_create_object(object_type, data, dry_run=True)` | Create any NetBox object |
+| `netbox_update_object(object_type, object_id, data, dry_run=True)` | Partial-update any NetBox object |
+| `netbox_delete_object(object_type, object_id, dry_run=True)` | Delete any NetBox object |
+
+All three accept the same `object_type` values as the read tools (100+ types).
+
+**Dry run is the default.** Every write tool returns a `_dry_run` key with instructions when called without `dry_run=False`:
+
+```
+"_dry_run": "Dry run succeeded. Call again with dry_run=False to execute."
+```
+
+## Versioning
+
+Releases follow PEP 440 post-release: `1.1.0.post1`, `1.1.0.post2`, etc.
+When upstream releases a new version, the `.post` counter resets: `1.2.0.post1`.
+
+---
+
+<!-- Original upstream README below -->
+
 # NetBox MCP Server
 
 > **⚠️ Breaking Change in v1.0.0**: The project structure has changed.
