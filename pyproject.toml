@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "netbox-mcp-server"
-version = "1.1.0"
-description = "A read-only MCP server for NetBox"
+name = "netbox-mcp-server-extended"
+version = "1.1.0.post1"
+description = "Write-enabled fork of the NetBox MCP Server — tracks netboxlabs/netbox-mcp-server upstream"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-netbox-mcp-server = "netbox_mcp_server.server:main"
+netbox-mcp-server-extended = "netbox_mcp_server.server:main"
 
 [dependency-groups]
 dev = [
