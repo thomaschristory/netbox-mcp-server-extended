@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   issues: write
+  id-token: write  # Required for PyPI Trusted Publisher (OIDC)
 
 jobs:
   sync:
@@ -76,8 +77,9 @@ jobs:
           uv sync
           uv run pytest
 
-      - name: Bump version and push release
+      - name: Bump version, push release, and build
         if: steps.check.outputs.in_sync == 'false'
+        id: build
         env:
           NEW_TAG: ${{ steps.check.outputs.latest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,3 +98,8 @@ jobs:
           gh release create "v${NEW_RELEASE}" \
             --generate-notes \
             --title "v${NEW_RELEASE} (upstream: $NEW_TAG)"
+          uv build
+
+      - name: Publish to PyPI
+        if: steps.check.outputs.in_sync == 'false'
+        uses: pypa/gh-action-pypi-publish@release/v1
