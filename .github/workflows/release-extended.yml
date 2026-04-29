@@ -12,6 +12,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: pypi  # Must match the environment name set in PyPI Trusted Publisher config
     steps:
       - uses: actions/checkout@v4
         with:
