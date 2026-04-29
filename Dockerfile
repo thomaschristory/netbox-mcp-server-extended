@@ -19,11 +19,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 
 FROM python:3.14-alpine3.23
-LABEL org.opencontainers.image.title="NetBox MCP Server" \
-      org.opencontainers.image.description="A read-only MCP server for NetBox" \
-      org.opencontainers.image.url="https://github.com/netboxlabs/netbox-mcp-server" \
-      org.opencontainers.image.source="https://github.com/netboxlabs/netbox-mcp-server" \
-      org.opencontainers.image.vendor="NetBox Labs" \
+LABEL org.opencontainers.image.title="NetBox MCP Server Extended" \
+      org.opencontainers.image.description="A write-enabled MCP server for NetBox (extended fork)" \
+      org.opencontainers.image.url="https://github.com/thomaschristory/netbox-mcp-server-extended" \
+      org.opencontainers.image.source="https://github.com/thomaschristory/netbox-mcp-server-extended" \
+      org.opencontainers.image.vendor="thomaschristory" \
       org.opencontainers.image.licenses="Apache-2.0"
 ENV PYTHONUNBUFFERED=1
 
