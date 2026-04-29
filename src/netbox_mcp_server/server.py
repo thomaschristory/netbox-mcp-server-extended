@@ -11,6 +11,7 @@ from pydantic import Field
 from netbox_mcp_server.config import Settings, configure_logging
 from netbox_mcp_server.netbox_client import NetBoxRestClient
 from netbox_mcp_server.netbox_types import NETBOX_OBJECT_TYPES
+from netbox_mcp_server.write_tools import register_write_tools
 
 
 def parse_cli_args() -> dict[str, Any]:
@@ -689,6 +690,7 @@ def main() -> None:
             verify_ssl=settings.verify_ssl,
         )
         logger.debug("NetBox client initialized successfully")
+        register_write_tools(mcp, netbox)
     except Exception as e:
         logger.error(f"Failed to initialize NetBox client: {e}")
         sys.exit(1)
