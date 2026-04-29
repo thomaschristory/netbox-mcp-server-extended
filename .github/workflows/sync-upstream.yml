@@ -1,0 +1,98 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Every Monday 06:00 UTC
+  workflow_dispatch:       # Manual trigger from GitHub Actions UI
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote and fetch tags
+        run: |
+          git remote add upstream https://github.com/netboxlabs/netbox-mcp-server
+          git fetch upstream --tags
+
+      - name: Check for new upstream tag
+        id: check
+        run: |
+          CURRENT=$(cat UPSTREAM_VERSION)
+          LATEST=$(git tag --list 'v*' --sort=-version:refname | grep -v '\.post' | head -1)
+          echo "current=$CURRENT"
+          echo "latest=$LATEST"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "in_sync=true" >> "$GITHUB_OUTPUT"
+            echo "Already in sync at $CURRENT — nothing to do."
+          else
+            echo "in_sync=false" >> "$GITHUB_OUTPUT"
+            echo "New upstream tag $LATEST found (was $CURRENT)."
+          fi
+
+      - name: Rebase onto new upstream tag
+        if: steps.check.outputs.in_sync == 'false'
+        env:
+          NEW_TAG: ${{ steps.check.outputs.latest }}
+        run: |
+          git checkout upstream-sync
+          git reset --hard "$NEW_TAG"
+          git push origin upstream-sync --force-with-lease
+          git checkout main
+          if ! git rebase upstream-sync; then
+            git rebase --abort
+            ISSUE_BODY="$(printf 'Automated rebase onto %s failed.\n\nTo fix:\n\n```\ngit fetch upstream --tags\ngit checkout main\ngit rebase upstream-sync\n# resolve conflicts\ngit rebase --continue\ngit push origin main\n```' "$NEW_TAG")"
+            gh issue create \
+              --title "Sync failed: $NEW_TAG needs manual rebase" \
+              --body "$ISSUE_BODY"
+            exit 1
+          fi
+
+      - name: Set up Python and uv
+        if: steps.check.outputs.in_sync == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies and run tests
+        if: steps.check.outputs.in_sync == 'false'
+        run: |
+          pip install uv
+          uv sync
+          uv run pytest
+
+      - name: Bump version and push release
+        if: steps.check.outputs.in_sync == 'false'
+        env:
+          NEW_TAG: ${{ steps.check.outputs.latest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CLEAN_VER="${NEW_TAG#v}"
+          NEW_RELEASE="${CLEAN_VER}.post1"
+          echo "$NEW_TAG" > UPSTREAM_VERSION
+          git add UPSTREAM_VERSION
+          git commit -m "chore: sync upstream to $NEW_TAG"
+          sed -i "s/^version = \".*\"/version = \"$NEW_RELEASE\"/" pyproject.toml
+          git add pyproject.toml
+          git commit -m "chore: bump version to $NEW_RELEASE"
+          git tag "v${NEW_RELEASE}"
+          git push origin main
+          git push origin "v${NEW_RELEASE}"
+          gh release create "v${NEW_RELEASE}" \
+            --generate-notes \
+            --title "v${NEW_RELEASE} (upstream: $NEW_TAG)"
