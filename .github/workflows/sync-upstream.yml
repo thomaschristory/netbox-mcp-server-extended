@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
   issues: write
-  id-token: write  # Required for PyPI Trusted Publisher (OIDC)
 
 jobs:
   sync:
@@ -17,7 +16,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # SYNC_TOKEN is a PAT with `contents` + `workflows` scope. The default
+          # GITHUB_TOKEN cannot push changes under .github/workflows/, which the
+          # rebase onto upstream necessarily includes. Falls back to GITHUB_TOKEN
+          # for dry runs, but real syncs that touch workflows require SYNC_TOKEN.
+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Configure git
         run: |
@@ -50,6 +53,7 @@ jobs:
         if: steps.check.outputs.in_sync == 'false'
         env:
           NEW_TAG: ${{ steps.check.outputs.latest }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           git checkout upstream-sync
           git reset --hard "$NEW_TAG"
@@ -77,12 +81,10 @@ jobs:
           uv sync
           uv run pytest
 
-      - name: Bump version, push release, and build
+      - name: Bump version, tag, and push
         if: steps.check.outputs.in_sync == 'false'
-        id: build
         env:
           NEW_TAG: ${{ steps.check.outputs.latest }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CLEAN_VER="${NEW_TAG#v}"
           NEW_RELEASE="${CLEAN_VER}.post1"
@@ -90,16 +92,13 @@ jobs:
           git add UPSTREAM_VERSION
           git commit -m "chore: sync upstream to $NEW_TAG"
           sed -i "s/^version = \".*\"/version = \"$NEW_RELEASE\"/" pyproject.toml
-          git add pyproject.toml
+          sed -i "s/^__version__ = \".*\"/__version__ = \"$NEW_RELEASE\"/" src/netbox_mcp_server/__init__.py
+          git add pyproject.toml src/netbox_mcp_server/__init__.py
           git commit -m "chore: bump version to $NEW_RELEASE"
           git tag "v${NEW_RELEASE}"
-          git push origin main
+          # main was rewritten by the rebase above, so the push must be forced.
+          git push origin main --force-with-lease
+          # Pushing the v*.post* tag triggers release-extended.yml (GitHub
+          # Release + PyPI publish) and docker-publish.yml (GHCR image); no
+          # inline publish needed here.
           git push origin "v${NEW_RELEASE}"
-          gh release create "v${NEW_RELEASE}" \
-            --generate-notes \
-            --title "v${NEW_RELEASE} (upstream: $NEW_TAG)"
-          uv build
-
-      - name: Publish to PyPI
-        if: steps.check.outputs.in_sync == 'false'
-        uses: pypa/gh-action-pypi-publish@release/v1
