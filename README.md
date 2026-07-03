@@ -403,12 +403,15 @@ docker run --rm \
   -e NETBOX_TOKEN=<your-api-token> \
   -e TRANSPORT=http \
   -e HOST=0.0.0.0 \
+  -e ALLOW_UNAUTHENTICATED_HTTP=true \
   -e PORT=8000 \
   -p 8000:8000 \
   ghcr.io/thomaschristory/netbox-mcp-server-extended:latest
 ```
 
 > **Note:** Docker containers require `TRANSPORT=http` since stdio transport doesn't work in containerized environments.
+
+> **Security:** The server has no built-in authentication and exposes write tools backed by a privileged NetBox token. Binding HTTP to a non-loopback address (such as `0.0.0.0` in a container) is refused unless you set `ALLOW_UNAUTHENTICATED_HTTP=true` to acknowledge the risk. Only do so behind an authenticating TLS reverse proxy, or on a trusted network. Use a read-only NetBox token unless you specifically need the write tools.
 
 **Available tags:**
 
@@ -432,6 +435,7 @@ docker run --rm \
   -e NETBOX_TOKEN=<your-api-token> \
   -e TRANSPORT=http \
   -e HOST=0.0.0.0 \
+  -e ALLOW_UNAUTHENTICATED_HTTP=true \
   -e PORT=8000 \
   -p 8000:8000 \
   ghcr.io/thomaschristory/netbox-mcp-server-extended:latest
@@ -447,6 +451,7 @@ docker run --rm \
   -e NETBOX_TOKEN=<your-api-token> \
   -e TRANSPORT=http \
   -e HOST=0.0.0.0 \
+  -e ALLOW_UNAUTHENTICATED_HTTP=true \
   -e LOG_LEVEL=DEBUG \
   -e VERIFY_SSL=false \
   -p 8000:8000 \
@@ -469,6 +474,7 @@ docker run --rm \
   -e NETBOX_TOKEN=<your-api-token> \
   -e TRANSPORT=http \
   -e HOST=0.0.0.0 \
+  -e ALLOW_UNAUTHENTICATED_HTTP=true \
   -e PORT=8000 \
   -p 8000:8000 \
   netbox-mcp-server-extended:latest
