@@ -1,8 +1,10 @@
 """Tests for filter validation."""
 
+from unittest.mock import patch
+
 import pytest
 
-from netbox_mcp_server.server import validate_filters
+from netbox_mcp_server.server import netbox_get_changelogs, validate_filters
 
 
 def test_direct_field_filters_pass():
@@ -48,3 +50,22 @@ def test_error_message_helpful():
     """Error message should mention the invalid filter and suggest alternatives."""
     with pytest.raises(ValueError, match="Multi-hop relationship traversal"):
         validate_filters({"device__site_id": 1})
+
+
+@patch("netbox_mcp_server.server.netbox")
+def test_changelogs_rejects_invalid_filters(mock_netbox):
+    """netbox_get_changelogs validates filters before calling the API."""
+    with pytest.raises(ValueError, match="'__in' lookup suffix is not supported"):
+        netbox_get_changelogs({"changed_object_id__in": [1, 2, 3]})
+    mock_netbox.get.assert_not_called()
+
+
+@patch("netbox_mcp_server.server.netbox")
+def test_changelogs_valid_filters_reach_api(mock_netbox):
+    """Valid changelog filters are forwarded to the NetBox API."""
+    mock_netbox.get.return_value = {"count": 0, "results": []}
+
+    netbox_get_changelogs({"action": "delete"})
+
+    mock_netbox.get.assert_called_once()
+    assert mock_netbox.get.call_args[1]["params"] == {"action": "delete"}

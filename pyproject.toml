@@ -30,6 +30,21 @@ dev = [
     "ruff>=0.15.12",
 ]
 
+[tool.uv]
+# Security floors for transitive dependencies (see issue #6 and the container
+# scan). urllib3/gitpython/requests come via the python-semantic-release dev
+# chain; cryptography/pyjwt/starlette are runtime transitives (via fastmcp) and
+# were flagged HIGH by the image scan. Constraints raise the minimum patched
+# version without declaring them as direct dependencies.
+constraint-dependencies = [
+    "urllib3>=2.7.0",
+    "gitpython>=3.1.50",
+    "cryptography>=46.0.7",
+    "requests>=2.33.0",
+    "pyjwt>=2.13.0",
+    "starlette>=1.3.1",
+]
+
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
 version_variables = ["src/netbox_mcp_server/__init__.py:__version__"]
