@@ -10,6 +10,8 @@ from pydantic import ValidationError
 from netbox_mcp_server.config import Settings, configure_logging
 from netbox_mcp_server.server import parse_cli_args
 
+ALL_INTERFACES = "0.0.0.0"  # noqa: S104 - test value, not an actual bind
+
 
 def test_settings_requires_netbox_url():
     """Test that Settings requires NETBOX_URL."""
@@ -58,6 +60,75 @@ def test_settings_masks_secrets_in_summary():
 
     assert summary["netbox_token"] == "***REDACTED***"
     assert "super-secret-token" not in str(summary)
+
+
+def test_cors_origins_rejects_wildcard():
+    """Test that the CORS wildcard '*' is rejected in favor of an allowlist."""
+
+    with pytest.raises(ValidationError, match="must not contain"):
+        Settings(
+            netbox_url="https://netbox.example.com/",
+            netbox_token="test-token",
+            cors_origins=["*"],
+        )
+
+
+def test_cors_origins_accepts_explicit_allowlist():
+    """Test that explicit origins are accepted."""
+
+    settings = Settings(
+        netbox_url="https://netbox.example.com/",
+        netbox_token="test-token",
+        cors_origins=["https://app.example.com"],
+    )
+    assert settings.cors_origins == ["https://app.example.com"]
+
+
+def test_cors_origins_rejects_malformed_origin():
+    """Test that origins without scheme/host are rejected."""
+
+    with pytest.raises(ValidationError, match="Invalid CORS_ORIGIN"):
+        Settings(
+            netbox_url="https://netbox.example.com/",
+            netbox_token="test-token",
+            cors_origins=["not-a-url"],
+        )
+
+
+# ===== HTTP Exposure Guard Tests =====
+
+
+def _settings(**kwargs) -> Settings:
+    base = {
+        "netbox_url": "https://netbox.example.com/",
+        "netbox_token": "test-token",
+    }
+    base.update(kwargs)
+    return Settings(**base)
+
+
+def test_http_exposure_false_for_stdio():
+    """stdio transport is never a network exposure."""
+    s = _settings(transport="stdio", host=ALL_INTERFACES)
+    assert s.http_exposes_unauthenticated_writes() is False
+
+
+def test_http_exposure_false_for_loopback_http():
+    """HTTP bound to loopback is allowed without opt-in."""
+    s = _settings(transport="http", host="127.0.0.1")
+    assert s.http_exposes_unauthenticated_writes() is False
+
+
+def test_http_exposure_true_for_nonloopback_without_optin():
+    """HTTP bound to a non-loopback host without opt-in fails closed."""
+    s = _settings(transport="http", host=ALL_INTERFACES)
+    assert s.http_exposes_unauthenticated_writes() is True
+
+
+def test_http_exposure_false_when_optin_set():
+    """Explicit opt-in permits non-loopback HTTP exposure."""
+    s = _settings(transport="http", host=ALL_INTERFACES, allow_unauthenticated_http=True)
+    assert s.http_exposes_unauthenticated_writes() is False
 
 
 # ===== CLI Argument Parsing Tests =====

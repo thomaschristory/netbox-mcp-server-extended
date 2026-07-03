@@ -443,6 +443,9 @@ def netbox_get_changelogs(filters: dict):
     """
     endpoint = "core/object-changes"
 
+    # Validate filter patterns, consistent with netbox_get_objects
+    validate_filters(filters)
+
     # Make API call
     return netbox.get(endpoint, params=filters)
 
@@ -691,19 +694,23 @@ def main() -> None:
             "This is insecure and should only be used for testing."
         )
 
-    if settings.transport == "http" and settings.host in ["0.0.0.0", "::", "[::]"]:  # noqa: S104 - checking, not binding
-        logger.warning(
-            f"HTTP transport is bound to {settings.host}:{settings.port}, which exposes the "
-            "service to all network interfaces (IPv4/IPv6). This is insecure and should only be "
-            "used for testing. Ensure this is secured with TLS/reverse proxy if exposed to network."
+    if settings.http_exposes_unauthenticated_writes():
+        logger.error(
+            f"Refusing to start HTTP transport bound to {settings.host}:{settings.port}: "
+            "this server has no built-in authentication and registers write tools backed "
+            "by a privileged NetBox token, so any client that can reach the port could "
+            "create/update/delete NetBox objects. Put an authenticating reverse proxy in "
+            "front and set ALLOW_UNAUTHENTICATED_HTTP=true to acknowledge, or bind to "
+            "127.0.0.1 for local use."
         )
-    elif settings.transport == "http" and settings.host not in [
-        "127.0.0.1",
-        "localhost",
-    ]:
-        logger.info(
-            f"HTTP transport is bound to {settings.host}:{settings.port}. "
-            "Ensure this is secured with TLS/reverse proxy if exposed to network."
+        sys.exit(1)
+
+    if settings.transport == "http" and settings.host not in ["127.0.0.1", "localhost", "::1"]:
+        logger.warning(
+            f"HTTP transport is bound to {settings.host}:{settings.port} WITHOUT built-in "
+            "authentication (ALLOW_UNAUTHENTICATED_HTTP is set). Write tools are reachable "
+            "by any client that can connect; ensure an authenticating TLS reverse proxy is "
+            "in front before exposing it to the network."
         )
 
     try:
