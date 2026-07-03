@@ -30,6 +30,18 @@ dev = [
     "ruff>=0.15.12",
 ]
 
+[tool.uv]
+# Security floors for transitive dev/CI-chain dependencies (see issue #6).
+# These packages are pulled in indirectly (mainly via python-semantic-release
+# and its authlib/joserfc chain); constraints raise the minimum patched
+# version without declaring them as direct dependencies.
+constraint-dependencies = [
+    "urllib3>=2.7.0",
+    "gitpython>=3.1.50",
+    "cryptography>=46.0.7",
+    "requests>=2.33.0",
+]
+
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
 version_variables = ["src/netbox_mcp_server/__init__.py:__version__"]
