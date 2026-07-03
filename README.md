@@ -21,6 +21,106 @@ All three accept the same `object_type` values as the read tools (100+ types).
 "_dry_run": "Dry run succeeded. Call again with dry_run=False to execute."
 ```
 
+## Write tools: usage & safety
+
+All three write tools default to `dry_run=True`. A dry run sends the request to NetBox with `?dry_run=true`, so NetBox fully validates the payload (permissions, required fields, uniqueness) without persisting anything. Re-run with `dry_run=False` to commit.
+
+### Dry-run walkthrough
+
+```python
+# 1. Dry run (default) — validates but does not write
+netbox_create_object(
+    object_type="extras.tag",
+    data={"name": "decommissioned", "slug": "decommissioned", "color": "9e9e9e"},
+)
+# → {
+#     "id": 42, "name": "decommissioned", "slug": "decommissioned", ...,
+#     "_dry_run": "Dry run succeeded. Call again with dry_run=False to execute."
+#   }
+
+# 2. Commit — same call with dry_run=False
+netbox_create_object(
+    object_type="extras.tag",
+    data={"name": "decommissioned", "slug": "decommissioned", "color": "9e9e9e"},
+    dry_run=False,
+)
+# → {"id": 42, "name": "decommissioned", "slug": "decommissioned", "color": "9e9e9e", ...}
+```
+
+The presence of the `_dry_run` key means nothing was written. Once you pass `dry_run=False`, the change is live.
+
+### Examples per tool
+
+```python
+# Create — add a tag
+netbox_create_object(
+    object_type="extras.tag",
+    data={"name": "decommissioned", "slug": "decommissioned", "color": "9e9e9e"},
+    dry_run=False,
+)
+
+# Update — set a device's status to "offline"
+# (partial update: only the supplied fields change)
+netbox_update_object(
+    object_type="dcim.device",
+    object_id=123,
+    data={"status": "offline"},
+    dry_run=False,
+)
+
+# Delete — remove a prefix by ID
+netbox_delete_object(
+    object_type="ipam.prefix",
+    object_id=456,
+    dry_run=False,
+)
+# → {"deleted": true, "object_type": "ipam.prefix", "object_id": 456}
+```
+
+`object_type` accepts the same dotted `app_label.model` values as the read tools (e.g. `extras.tag`, `dcim.device`, `ipam.prefix`). Calling a write tool with an invalid type returns the full list of valid types.
+
+### Safety guidance
+
+- **Use a read-only token unless you need writes.** The write tools require a NetBox token with write permissions; if you only query data, keep using a read-only token so the tools physically cannot change anything.
+- **Scope write tokens narrowly.** Grant only the object permissions you actually intend to modify.
+- **Always dry-run first.** Leave `dry_run=True` (the default) for the initial call, review the returned object, then repeat with `dry_run=False`. This is the recommended workflow for LLM-driven changes: the model proposes a change, you inspect the dry-run result, then approve the commit.
+- **Deletes are irreversible.** Confirm the `object_id` from a dry run before committing a delete.
+
+### Enabling write tools in Claude Code
+
+The write tools register automatically when the server starts — no extra flag is needed. Add the extended server with a write-capable token:
+
+```bash
+claude mcp add --transport stdio netbox \
+  --env NETBOX_URL=https://netbox.example.com/ \
+  --env NETBOX_TOKEN=<your-write-token> \
+  -- uv --directory /path/to/netbox-mcp-server-extended run netbox-mcp-server
+```
+
+Or in a Claude Desktop / MCP client config file:
+
+```json
+{
+    "mcpServers": {
+        "netbox": {
+            "command": "uv",
+            "args": [
+                "--directory",
+                "/path/to/netbox-mcp-server-extended",
+                "run",
+                "netbox-mcp-server"
+            ],
+            "env": {
+                "NETBOX_URL": "https://netbox.example.com/",
+                "NETBOX_TOKEN": "<your-write-token>"
+            }
+        }
+    }
+}
+```
+
+After adding, verify with `/mcp` in Claude Code — you should see `netbox_create_object`, `netbox_update_object`, and `netbox_delete_object` alongside the read tools.
+
 ## Versioning
 
 Releases follow PEP 440 post-release: `1.1.0.post1`, `1.1.0.post2`, etc.
@@ -291,40 +391,13 @@ uv run netbox-mcp-server --transport http --port 9000       # Custom HTTP port
 
 ## Docker Usage
 
-### Pre-built Image (Docker Hub)
+### Pre-built Image (GHCR) — recommended
 
-Pre-built multi-arch images (`linux/amd64`, `linux/arm64`) are published to Docker Hub on every tagged release:
-
-```bash
-docker pull netboxlabs/netbox-mcp-server:latest
-```
-
-Pin to a specific version in production. The `latest` tag tracks the most recent release and can change without notice. See the [releases page](https://github.com/netboxlabs/netbox-mcp-server/releases) for available versions:
+This fork publishes pre-built multi-arch images (`linux/amd64`, `linux/arm64`) to the GitHub Container Registry. Pull and run without cloning the repo:
 
 ```bash
-docker pull netboxlabs/netbox-mcp-server:<X.Y.Z>   # exact version
-docker pull netboxlabs/netbox-mcp-server:<X.Y>     # latest within a minor
-docker pull netboxlabs/netbox-mcp-server:<X>       # latest within a major
-```
+docker pull ghcr.io/thomaschristory/netbox-mcp-server-extended:latest
 
-**Verify image provenance (optional but recommended).** Images are signed with [cosign](https://github.com/sigstore/cosign) (keyless, via GitHub OIDC) and ship with SLSA build provenance:
-
-```bash
-cosign verify \
-  --certificate-identity-regexp '^https://github.com/netboxlabs/netbox-mcp-server/' \
-  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  netboxlabs/netbox-mcp-server:<tag>
-```
-
-### Standard Docker Image
-
-Build and run the NetBox MCP server in a container:
-
-```bash
-# Build the image
-docker build -t netbox-mcp-server:latest .
-
-# Run with HTTP transport (required for Docker containers)
 docker run --rm \
   -e NETBOX_URL=https://netbox.example.com/ \
   -e NETBOX_TOKEN=<your-api-token> \
@@ -332,14 +405,25 @@ docker run --rm \
   -e HOST=0.0.0.0 \
   -e PORT=8000 \
   -p 8000:8000 \
-  netbox-mcp-server:latest
+  ghcr.io/thomaschristory/netbox-mcp-server-extended:latest
 ```
 
 > **Note:** Docker containers require `TRANSPORT=http` since stdio transport doesn't work in containerized environments.
 
+**Available tags:**
+
+| Tag | Description |
+|-----|-------------|
+| `:latest` | Most recent build from the default branch |
+| `:main` | Latest build of the `main` branch |
+| `:sha-<short>` | Immutable build for a specific commit (e.g. `:sha-4f06758`) |
+| `:X.Y.Z`, `:X.Y`, `:X` | Semantic-version tags published on releases |
+
+Pin to a specific version or commit SHA in production — `:latest` and `:main` track the newest build and can change without notice.
+
 **Connecting to NetBox on your host machine:**
 
-If your NetBox instance is running on your host machine (not in a container), you need to use `host.docker.internal` instead of `localhost` on macOS and Windows:
+If your NetBox instance is running on your host machine (not in a container), use `host.docker.internal` instead of `localhost` on macOS and Windows:
 
 ```bash
 # For NetBox running on host (macOS/Windows)
@@ -350,7 +434,7 @@ docker run --rm \
   -e HOST=0.0.0.0 \
   -e PORT=8000 \
   -p 8000:8000 \
-  netbox-mcp-server:latest
+  ghcr.io/thomaschristory/netbox-mcp-server-extended:latest
 ```
 
 > **Note:** On Linux, you can use `--network host` instead, or use the host's IP address directly.
@@ -366,10 +450,29 @@ docker run --rm \
   -e LOG_LEVEL=DEBUG \
   -e VERIFY_SSL=false \
   -p 8000:8000 \
-  netbox-mcp-server:latest
+  ghcr.io/thomaschristory/netbox-mcp-server-extended:latest
 ```
 
 The server will be accessible at `http://localhost:8000/mcp` for MCP clients. You can connect to it using your preferred method.
+
+### Build from Source
+
+To build the image yourself (for local development or customisation):
+
+```bash
+# Build the image
+docker build -t netbox-mcp-server-extended:latest .
+
+# Run it (same environment variables as the pre-built image above)
+docker run --rm \
+  -e NETBOX_URL=https://netbox.example.com/ \
+  -e NETBOX_TOKEN=<your-api-token> \
+  -e TRANSPORT=http \
+  -e HOST=0.0.0.0 \
+  -e PORT=8000 \
+  -p 8000:8000 \
+  netbox-mcp-server-extended:latest
+```
 
 ## Plugin Object Type Discovery
 
