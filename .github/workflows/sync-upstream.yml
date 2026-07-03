@@ -13,7 +13,28 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Verify SYNC_TOKEN is configured
+        # Secrets cannot be used in `if:` conditions, so map the secret's
+        # presence to an env var and test it here. This fails fast with an
+        # actionable message before any reset/push, instead of the cryptic
+        # GitHub App "remote rejected ... without workflows permission"
+        # rejection you get when checkout falls back to GITHUB_TOKEN and the
+        # sync rebase touches .github/workflows/*.
+        env:
+          HAS_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+        run: |
+          if [ "$HAS_SYNC_TOKEN" != "true" ]; then
+            echo "::error::SYNC_TOKEN secret is not set. The sync rebase touches"
+            echo "::error::.github/workflows/*, which the default GITHUB_TOKEN"
+            echo "::error::cannot push. Create a fine-grained PAT scoped to this"
+            echo "::error::repo with 'Contents: read and write' + 'Workflows:"
+            echo "::error::read and write' permissions, then run:"
+            echo "::error::  gh secret set SYNC_TOKEN"
+            exit 1
+          fi
+          echo "SYNC_TOKEN is configured."
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           # SYNC_TOKEN is a PAT with `contents` + `workflows` scope. The default
@@ -70,7 +91,7 @@ jobs:
 
       - name: Set up Python and uv
         if: steps.check.outputs.in_sync == 'false'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
 
