@@ -37,7 +37,8 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = Field(
         default_factory=list,
-        description="Browser origins allowed for HTTP CORS. Use * to allow any origin.",
+        description="Explicit allowlist of browser origins for HTTP CORS "
+        "(e.g. https://app.example.com). The wildcard '*' is not permitted.",
     )
 
     mcp_auth_token: SecretStr | None = Field(
@@ -57,6 +58,13 @@ class Settings(BaseSettings):
     # ===== Security Settings =====
     verify_ssl: bool = True
     """Whether to verify SSL certificates when connecting to NetBox"""
+
+    allow_unauthenticated_http: bool = False
+    """Acknowledge exposing HTTP transport on a non-loopback address without
+    built-in authentication. The server ships no auth and registers write tools
+    backed by a privileged NetBox token, so network-exposed HTTP is refused
+    unless this is explicitly set (e.g. when an authenticating reverse proxy is
+    in front)."""
 
     # ===== Observability Settings =====
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -113,16 +121,40 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def validate_cors_origins(cls, v: object) -> list[str]:
-        """Ensure each CORS origin is a valid URL."""
+        """Ensure each CORS origin is an explicit, valid URL.
+
+        The wildcard ``*`` is rejected: HTTP transport can expose write tools,
+        so an allowlist of trusted origins is required rather than any origin.
+        """
         for origin in v:
             if origin == "*":
-                continue
+                raise ValueError(
+                    "CORS_ORIGINS must not contain '*'. Specify an explicit "
+                    "allowlist of trusted origins (e.g. https://app.example.com)."
+                )
             parsed = urlparse(origin)
             if not parsed.scheme or not parsed.netloc:
                 raise ValueError(
                     f"Invalid CORS_ORIGIN: {origin!r} (expected format: http://host:port)"
                 )
         return v
+
+    def http_exposes_unauthenticated_writes(self) -> bool:
+        """Whether HTTP transport would serve write tools without authentication.
+
+        True when transport is HTTP, the bind host is not loopback, no bearer
+        token (``mcp_auth_token``) is configured, and the operator has not opted
+        in via ``allow_unauthenticated_http``. Used to fail closed before
+        starting a network-exposed, unauthenticated server.
+        """
+        if self.transport != "http":
+            return False
+        if self.host in {"127.0.0.1", "localhost", "::1"}:
+            return False
+        if self.mcp_auth_token is not None:
+            # A bearer token enforced by FastMCP is authentication.
+            return False
+        return not self.allow_unauthenticated_http
 
     def get_effective_config_summary(self) -> dict:
         """

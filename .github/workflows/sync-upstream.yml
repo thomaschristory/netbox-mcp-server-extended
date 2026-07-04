@@ -1,0 +1,125 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Every Monday 06:00 UTC
+  workflow_dispatch:       # Manual trigger from GitHub Actions UI
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify SYNC_TOKEN is configured
+        # Secrets cannot be used in `if:` conditions, so map the secret's
+        # presence to an env var and test it here. This fails fast with an
+        # actionable message before any reset/push, instead of the cryptic
+        # GitHub App "remote rejected ... without workflows permission"
+        # rejection you get when checkout falls back to GITHUB_TOKEN and the
+        # sync rebase touches .github/workflows/*.
+        env:
+          HAS_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+        run: |
+          if [ "$HAS_SYNC_TOKEN" != "true" ]; then
+            echo "::error::SYNC_TOKEN secret is not set. The sync rebase touches"
+            echo "::error::.github/workflows/*, which the default GITHUB_TOKEN"
+            echo "::error::cannot push. Create a fine-grained PAT scoped to this"
+            echo "::error::repo with 'Contents: read and write' + 'Workflows:"
+            echo "::error::read and write' permissions, then run:"
+            echo "::error::  gh secret set SYNC_TOKEN"
+            exit 1
+          fi
+          echo "SYNC_TOKEN is configured."
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          # SYNC_TOKEN is a PAT with `contents` + `workflows` scope. The default
+          # GITHUB_TOKEN cannot push changes under .github/workflows/, which the
+          # rebase onto upstream necessarily includes. Falls back to GITHUB_TOKEN
+          # for dry runs, but real syncs that touch workflows require SYNC_TOKEN.
+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote and fetch tags
+        run: |
+          git remote add upstream https://github.com/netboxlabs/netbox-mcp-server
+          git fetch upstream --tags
+
+      - name: Check for new upstream tag
+        id: check
+        run: |
+          CURRENT=$(cat UPSTREAM_VERSION)
+          LATEST=$(git tag --list 'v*' --sort=-version:refname | grep -v '\.post' | head -1)
+          echo "current=$CURRENT"
+          echo "latest=$LATEST"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "in_sync=true" >> "$GITHUB_OUTPUT"
+            echo "Already in sync at $CURRENT — nothing to do."
+          else
+            echo "in_sync=false" >> "$GITHUB_OUTPUT"
+            echo "New upstream tag $LATEST found (was $CURRENT)."
+          fi
+
+      - name: Rebase onto new upstream tag
+        if: steps.check.outputs.in_sync == 'false'
+        env:
+          NEW_TAG: ${{ steps.check.outputs.latest }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          git checkout upstream-sync
+          git reset --hard "$NEW_TAG"
+          git push origin upstream-sync --force-with-lease
+          git checkout main
+          if ! git rebase upstream-sync; then
+            git rebase --abort
+            ISSUE_BODY="$(printf 'Automated rebase onto %s failed.\n\nTo fix:\n\n```\ngit fetch upstream --tags\ngit checkout main\ngit rebase upstream-sync\n# resolve conflicts\ngit rebase --continue\ngit push origin main\n```' "$NEW_TAG")"
+            gh issue create \
+              --title "Sync failed: $NEW_TAG needs manual rebase" \
+              --body "$ISSUE_BODY"
+            exit 1
+          fi
+
+      - name: Set up Python and uv
+        if: steps.check.outputs.in_sync == 'false'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies and run tests
+        if: steps.check.outputs.in_sync == 'false'
+        run: |
+          pip install uv
+          uv sync
+          uv run pytest
+
+      - name: Bump version, tag, and push
+        if: steps.check.outputs.in_sync == 'false'
+        env:
+          NEW_TAG: ${{ steps.check.outputs.latest }}
+        run: |
+          CLEAN_VER="${NEW_TAG#v}"
+          NEW_RELEASE="${CLEAN_VER}.post1"
+          echo "$NEW_TAG" > UPSTREAM_VERSION
+          git add UPSTREAM_VERSION
+          git commit -m "chore: sync upstream to $NEW_TAG"
+          sed -i "s/^version = \".*\"/version = \"$NEW_RELEASE\"/" pyproject.toml
+          sed -i "s/^__version__ = \".*\"/__version__ = \"$NEW_RELEASE\"/" src/netbox_mcp_server/__init__.py
+          git add pyproject.toml src/netbox_mcp_server/__init__.py
+          git commit -m "chore: bump version to $NEW_RELEASE"
+          git tag "v${NEW_RELEASE}"
+          # main was rewritten by the rebase above, so the push must be forced.
+          git push origin main --force-with-lease
+          # Pushing the v*.post* tag triggers release-extended.yml (GitHub
+          # Release + PyPI publish) and docker-publish.yml (GHCR image); no
+          # inline publish needed here.
+          git push origin "v${NEW_RELEASE}"
