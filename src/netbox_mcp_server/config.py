@@ -213,7 +213,11 @@ def configure_logging(
             "urllib3": {
                 "level": "WARNING" if log_level != "DEBUG" else "DEBUG",
             },
+            # httpx2 is our NetBox client; httpx still reaches us via fastmcp/mcp
             "httpx": {
+                "level": "WARNING" if log_level != "DEBUG" else "DEBUG",
+            },
+            "httpx2": {
                 "level": "WARNING" if log_level != "DEBUG" else "DEBUG",
             },
         },
