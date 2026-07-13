@@ -238,9 +238,11 @@ def test_configure_logging_suppresses_http_clients():
 
     urllib3_logger = logging.getLogger("urllib3")
     httpx_logger = logging.getLogger("httpx")
+    httpx2_logger = logging.getLogger("httpx2")
 
     assert urllib3_logger.level == logging.WARNING
     assert httpx_logger.level == logging.WARNING
+    assert httpx2_logger.level == logging.WARNING
 
 
 def test_configure_logging_shows_http_clients_at_debug():
@@ -250,7 +252,9 @@ def test_configure_logging_shows_http_clients_at_debug():
     root_logger = logging.getLogger()
     urllib3_logger = logging.getLogger("urllib3")
     httpx_logger = logging.getLogger("httpx")
+    httpx2_logger = logging.getLogger("httpx2")
 
     assert root_logger.level == logging.DEBUG
     assert urllib3_logger.level == logging.DEBUG
     assert httpx_logger.level == logging.DEBUG
+    assert httpx2_logger.level == logging.DEBUG
