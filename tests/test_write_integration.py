@@ -15,7 +15,7 @@ global ``server.netbox`` is patched to the live client so the read tools work.
 import os
 import uuid
 
-import httpx2
+import httpx
 import pytest
 from fastmcp import FastMCP
 
@@ -46,7 +46,7 @@ def _delete_tags_by_slug(client: NetBoxRestClient, slug: str) -> None:
         try:
             deleted = client.session.delete(client._build_url(TAG_ENDPOINT, obj["id"]))
             deleted.raise_for_status()
-        except httpx2.HTTPError:
+        except httpx.HTTPError:
             # Cleanup is best-effort; a failed delete must not mask test results.
             pass
 
@@ -157,19 +157,19 @@ class TestErrors:
     def test_missing_required_fields_raises(self, live_client: NetBoxRestClient) -> None:
         create = _last_registered["netbox_create_object"]
 
-        with pytest.raises(httpx2.HTTPStatusError):
+        with pytest.raises(httpx.HTTPStatusError):
             create(TAG_TYPE, {}, dry_run=False)
 
     def test_update_nonexistent_object_raises(self, live_client: NetBoxRestClient) -> None:
         update = _last_registered["netbox_update_object"]
 
-        with pytest.raises(httpx2.HTTPStatusError):
+        with pytest.raises(httpx.HTTPStatusError):
             update(TAG_TYPE, MISSING_OBJECT_ID, {"color": "ff0000"}, dry_run=False)
 
     def test_delete_nonexistent_object_raises(self, live_client: NetBoxRestClient) -> None:
         delete = _last_registered["netbox_delete_object"]
 
-        with pytest.raises(httpx2.HTTPStatusError):
+        with pytest.raises(httpx.HTTPStatusError):
             delete(TAG_TYPE, MISSING_OBJECT_ID, dry_run=False)
 
 
