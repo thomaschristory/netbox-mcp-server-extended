@@ -18,25 +18,30 @@ All three accept the same `object_type` values as the read tools (100+ types).
 **Dry run is the default.** Every write tool returns a `_dry_run` key with instructions when called without `dry_run=False`:
 
 ```
-"_dry_run": "Dry run succeeded. Call again with dry_run=False to execute."
+"_dry_run": "Validated by NetBox (executed with commit=false and rolled back — nothing was written). Call again with dry_run=False to execute."
 ```
 
 ## Write tools: usage & safety
 
-All three write tools default to `dry_run=True`. A dry run sends the request to NetBox with `?dry_run=true`, so NetBox fully validates the payload (permissions, required fields, uniqueness) without persisting anything. Re-run with `dry_run=False` to commit.
+All three write tools default to `dry_run=True`. A dry run is executed by NetBox itself: the server runs the bundled [`MCPWriteValidator` custom script](netbox_scripts/README.md) with `commit=false`, so NetBox applies the change with its own REST serializers inside a transaction that is always rolled back — required fields, choices, uniqueness, and protected references are all checked, nothing persists, and no webhooks or event rules fire. Re-run with `dry_run=False` to commit through the regular REST API.
+
+Dry runs require [`netbox_scripts/netbox_mcp_server_extended.py`](netbox_scripts/README.md) to be installed on the NetBox host (one file, no restart) and a running RQ worker. If either is missing, the dry run fails with instructions — it never falls back to performing the real write. (Earlier releases appended `?dry_run=true` to real requests, a parameter stock NetBox ignores, which made "dry" runs execute; this release replaces that mechanism.)
 
 ### Dry-run walkthrough
 
 ```python
-# 1. Dry run (default) — validates but does not write
+# 1. Dry run (default) — validated by NetBox, rolled back, nothing written
 netbox_create_object(
     object_type="extras.tag",
     data={"name": "decommissioned", "slug": "decommissioned", "color": "9e9e9e"},
 )
 # → {
-#     "id": 42, "name": "decommissioned", "slug": "decommissioned", ...,
-#     "_dry_run": "Dry run succeeded. Call again with dry_run=False to execute."
+#     "valid": true,
+#     "operation": "create", "object_type": "extras.tag",
+#     "detail": "Would create extras.tag (decommissioned)",
+#     "_dry_run": "Validated by NetBox (executed with commit=false and rolled back — nothing was written). Call again with dry_run=False to execute."
 #   }
+# An invalid payload returns {"valid": false, "errors": ["slug: This field is required."], ...}
 
 # 2. Commit — same call with dry_run=False
 netbox_create_object(
@@ -78,6 +83,23 @@ netbox_delete_object(
 ```
 
 `object_type` accepts the same dotted `app_label.model` values as the read tools (e.g. `extras.tag`, `dcim.device`, `ipam.prefix`). Calling a write tool with an invalid type returns the full list of valid types.
+
+### NetBox compatibility
+
+- Read tools (inherited from upstream): NetBox 4.1+ (`netbox_get_changelogs`
+  needs the 4.1 `core/object-changes` endpoint; plugin discovery needs 4.2+).
+- Write tools and dry runs: NetBox 4.0–4.7, verified against the newest tag of
+  each minor line. On 4.0.x a failing dry run reports job status `failed`
+  rather than `completed`; the client accepts both.
+- Dry-run rollback is guaranteed on every supported release, but on NetBox
+  4.1.9–4.1.11 and 4.2.0–4.2.4 event rules/webhooks may still fire for the
+  rolled-back changes (a NetBox-side gap in event suppression, fixed in
+  4.2.5). Avoid dry runs on those releases if webhooks are configured.
+- On NetBox 4.6.8+ and 4.7, running scripts over the REST API requires a token
+  with write ability — this also applies to dry runs.
+- Core custom scripts are deprecated in NetBox 4.7 and scheduled for removal
+  in 5.0 (~May 2027); the dry-run backend will move to NetBox's replacement
+  plugin when it lands.
 
 ### Safety guidance
 
@@ -310,6 +332,8 @@ The server supports multiple configuration sources with the following precedence
 | `MCP_AUTH_TOKEN` | String | - | No | Bearer token required on the HTTP endpoint. When unset, the HTTP transport is unauthenticated. Clients send `Authorization: Bearer <token>`. |
 | `VERIFY_SSL` | Boolean | `true` | No | Whether to verify SSL certificates |
 | `ENABLE_PLUGIN_DISCOVERY` | Boolean | `false` | No | Auto-discover plugin object types at startup |
+| `DRY_RUN_SCRIPT` | String | `netbox_mcp_server_extended.MCPWriteValidator` | No | NetBox custom script (`<module>.<ClassName>`) executed with `commit=false` to back write-tool dry runs. See [netbox_scripts/README.md](netbox_scripts/README.md). |
+| `DRY_RUN_TIMEOUT` | Number | `60` | No | Seconds to wait for a dry-run script job to finish |
 | `LOG_LEVEL` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL` | `INFO` | No | Logging verbosity |
 
 ### Transport Examples

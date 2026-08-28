@@ -2,13 +2,20 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from netbox_mcp_server.config import Settings
 from netbox_mcp_server.netbox_client import NetBoxRestClient
 from netbox_mcp_server.netbox_types import NETBOX_OBJECT_TYPES
 from netbox_mcp_server.netbox_write_client import NetBoxWriteClient
 
 _last_registered: dict[str, Any] = {}
 
-DRY_RUN_MSG = "Dry run succeeded. Call again with dry_run=False to execute."
+DRY_RUN_NOTE = (
+    "With dry_run=True (default), NetBox itself validates the change via the "
+    "MCPWriteValidator script and rolls everything back — nothing persists, and "
+    "the response reports 'valid' plus any errors. Requires the script and an "
+    "RQ worker on the NetBox side; if missing, the dry run fails instead of "
+    "writing. Pass dry_run=False to execute."
+)
 
 
 def _resolve_endpoint(object_type: str) -> str:
@@ -18,15 +25,32 @@ def _resolve_endpoint(object_type: str) -> str:
     return NETBOX_OBJECT_TYPES[object_type]["endpoint"]
 
 
-def register_write_tools(mcp: FastMCP, client: NetBoxRestClient) -> None:
-    write_client = NetBoxWriteClient(client)
+def register_write_tools(
+    mcp: FastMCP, client: NetBoxRestClient, settings: Settings | None = None
+) -> None:
+    """Register the create/update/delete tools on the MCP server.
+
+    Args:
+        mcp: FastMCP instance to register the tools on.
+        client: NetBox REST client used for real writes and dry-run execution.
+        settings: Optional server settings supplying the dry-run script name
+            and timeout; when omitted, the module defaults apply.
+    """
+    if settings is not None:
+        write_client = NetBoxWriteClient(
+            client,
+            dry_run_script=settings.dry_run_script,
+            dry_run_timeout=settings.dry_run_timeout,
+        )
+    else:
+        write_client = NetBoxWriteClient(client)
 
     @mcp.tool(
         description=(
-            "Create a new NetBox object. Pass dry_run=True (default) to validate without "
-            "writing — response will include '_dry_run' with instructions to execute for real.\n\n"
+            f"Create a new NetBox object. {DRY_RUN_NOTE}\n\n"
             "Uses the same object_type values as netbox_get_objects (e.g. 'dcim.site', "
-            "'ipam.ipaddress'). The data dict should match the NetBox API POST body for that type."
+            "'ipam.ipaddress'). The data dict should match the NetBox API POST body "
+            "for that type."
         )
     )
     def netbox_create_object(
@@ -35,15 +59,12 @@ def register_write_tools(mcp: FastMCP, client: NetBoxRestClient) -> None:
         dry_run: bool = True,
     ) -> dict[str, Any]:
         endpoint = _resolve_endpoint(object_type)
-        result = write_client.create(endpoint, data, dry_run=dry_run)
-        if dry_run:
-            result["_dry_run"] = DRY_RUN_MSG
-        return result
+        return write_client.create(endpoint, object_type, data, dry_run=dry_run)
 
     @mcp.tool(
         description=(
-            "Update an existing NetBox object (partial update — only supplied fields change). "
-            "Pass dry_run=True (default) to validate without writing.\n\n"
+            "Update an existing NetBox object (partial update — only supplied fields "
+            f"change). {DRY_RUN_NOTE}\n\n"
             "Uses the same object_type values as netbox_get_objects. "
             "The data dict should contain only the fields you want to change."
         )
@@ -55,15 +76,11 @@ def register_write_tools(mcp: FastMCP, client: NetBoxRestClient) -> None:
         dry_run: bool = True,
     ) -> dict[str, Any]:
         endpoint = _resolve_endpoint(object_type)
-        result = write_client.update(endpoint, object_id, data, dry_run=dry_run)
-        if dry_run:
-            result["_dry_run"] = DRY_RUN_MSG
-        return result
+        return write_client.update(endpoint, object_type, object_id, data, dry_run=dry_run)
 
     @mcp.tool(
         description=(
-            "Delete a NetBox object. Pass dry_run=True (default) to validate without deleting. "
-            "Pass dry_run=False to execute the deletion.\n\n"
+            f"Delete a NetBox object. {DRY_RUN_NOTE}\n\n"
             "Uses the same object_type values as netbox_get_objects."
         )
     )
@@ -73,15 +90,15 @@ def register_write_tools(mcp: FastMCP, client: NetBoxRestClient) -> None:
         dry_run: bool = True,
     ) -> dict[str, Any]:
         endpoint = _resolve_endpoint(object_type)
-        deleted = write_client.delete(endpoint, object_id, dry_run=dry_run)
-        result: dict[str, Any] = {
-            "deleted": deleted,
+        result = write_client.delete(endpoint, object_type, object_id, dry_run=dry_run)
+        if isinstance(result, dict):
+            # Script-backed dry runs return the structured verdict directly.
+            return result
+        return {
+            "deleted": bool(result),
             "object_type": object_type,
             "object_id": object_id,
         }
-        if dry_run:
-            result["_dry_run"] = DRY_RUN_MSG
-        return result
 
     _last_registered["netbox_create_object"] = netbox_create_object
     _last_registered["netbox_update_object"] = netbox_update_object
