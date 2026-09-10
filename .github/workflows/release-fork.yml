@@ -1,0 +1,229 @@
+name: Release Fork Layer
+
+# Cuts a fork-layer release on the current upstream pin. It increments the
+# PEP 440 `.postN` counter, commits the new version, and pushes the
+# `v<version>` tag. The tag push starts `release-extended.yml` (GitHub Release
+# and PyPI) and `docker-publish.yml` (GHCR image).
+#
+# Use this workflow when the fork layer changes but upstream has no new
+# release. A new upstream release is handled by `sync-upstream.yml`, which
+# rebases the fork layer and resets the counter to `.post1`.
+#
+# This fork pins `<upstream-version>.postN`, which is valid PEP 440 but not
+# valid semver. Do not replace this workflow with python-semantic-release: it
+# cannot parse `.postN` tags, so it reads the history as empty and computes a
+# version downgrade. See issue #25.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute and print the next version. Do not commit, tag, or push."
+        type: boolean
+        default: false
+      allow_red_ci:
+        description: "Release even if Test & Lint did not pass on the head of main."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-fork
+
+jobs:
+  release:
+    name: Bump, tag, and push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Verify SYNC_TOKEN is configured
+        # Secrets are not available in `if:` conditions, so map the presence of
+        # the secret to an env var and test it here. A tag pushed with the
+        # default GITHUB_TOKEN does not start another workflow, so the release
+        # would stop after the tag and never reach PyPI or GHCR. SYNC_TOKEN is
+        # a PAT, and a tag it pushes starts `release-extended.yml`. A dry run
+        # pushes nothing, so it does not need the token.
+        if: ${{ !inputs.dry_run }}
+        env:
+          HAS_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+        run: |
+          if [ "$HAS_SYNC_TOKEN" != "true" ]; then
+            echo "::error::SYNC_TOKEN secret is not set. A tag pushed with the"
+            echo "::error::default GITHUB_TOKEN does not start other workflows,"
+            echo "::error::so release-extended.yml and docker-publish.yml would"
+            echo "::error::not run. Create a fine-grained PAT scoped to this"
+            echo "::error::repo with 'Contents: read and write' permission, then"
+            echo "::error::run:"
+            echo "::error::  gh secret set SYNC_TOKEN"
+            exit 1
+          fi
+          echo "SYNC_TOKEN is configured."
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Verify Test & Lint passed on the head of main
+        if: ${{ !inputs.allow_red_ci }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          echo "Head of main is ${HEAD_SHA}."
+          CONCLUSIONS=$(gh api \
+            "repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+            --jq '.check_runs[] | select(.name | startswith("test ")) | .conclusion')
+          if [ -z "$CONCLUSIONS" ]; then
+            echo "::error::No 'test' check runs found for ${HEAD_SHA}. Wait for"
+            echo "::error::Test & Lint to finish, or re-run with allow_red_ci."
+            exit 1
+          fi
+          if printf '%s\n' "$CONCLUSIONS" | grep -qv '^success$'; then
+            echo "::error::Test & Lint did not pass on ${HEAD_SHA}:"
+            printf '%s\n' "$CONCLUSIONS"
+            exit 1
+          fi
+          echo "Test & Lint passed on ${HEAD_SHA}."
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Compute the next version
+        id: next
+        run: |
+          python3 - <<'PYEOF' >> "${GITHUB_OUTPUT}"
+          import os
+          import re
+          import subprocess
+          import sys
+          import tomllib
+
+          def fail(message: str) -> None:
+              print(f"::error::{message}", file=sys.stderr)
+              sys.exit(1)
+
+          with open("pyproject.toml", "rb") as handle:
+              current = tomllib.load(handle)["project"]["version"]
+
+          match = re.fullmatch(r"(?P<base>\d+\.\d+\.\d+)(?:\.post(?P<n>\d+))?", current)
+          if match is None:
+              fail(
+                  f"pyproject.toml version {current!r} is not "
+                  "'<major>.<minor>.<patch>' or '<major>.<minor>.<patch>.postN'."
+              )
+
+          # The three version records must agree before a release. A mismatch
+          # means an earlier bump was incomplete, and `uv sync --locked` in the
+          # Docker build fails on a stale lockfile.
+          with open("src/netbox_mcp_server/__init__.py", encoding="utf-8") as handle:
+              init_source = handle.read()
+          init_match = re.search(r'^__version__ = "(?P<v>[^"]+)"', init_source, re.M)
+          if init_match is None:
+              fail("src/netbox_mcp_server/__init__.py has no __version__.")
+          if init_match.group("v") != current:
+              fail(
+                  f"__init__.py is {init_match.group('v')!r} but pyproject.toml "
+                  f"is {current!r}. Correct both files first."
+              )
+
+          with open("uv.lock", "rb") as handle:
+              lock_source = handle.read().decode("utf-8")
+          lock_match = re.search(
+              r'^name = "netbox-mcp-server-extended"\nversion = "(?P<v>[^"]+)"',
+              lock_source,
+              re.M,
+          )
+          if lock_match is None:
+              fail("uv.lock has no netbox-mcp-server-extended entry.")
+          if lock_match.group("v") != current:
+              fail(
+                  f"uv.lock is {lock_match.group('v')!r} but pyproject.toml is "
+                  f"{current!r}. Run `uv lock` and commit the result."
+              )
+
+          # The base must track the upstream tag this fork is rebased onto.
+          with open("UPSTREAM_VERSION", encoding="utf-8") as handle:
+              upstream = handle.read().strip()
+          base = match.group("base")
+          if upstream.lstrip("v") != base:
+              fail(
+                  f"UPSTREAM_VERSION is {upstream!r} but the version base is "
+                  f"{base!r}. Run Sync Upstream to realign them."
+              )
+
+          next_version = f"{base}.post{int(match.group('n') or 0) + 1}"
+          tag = f"v{next_version}"
+          existing = subprocess.run(
+              ["git", "tag", "--list", tag],
+              capture_output=True,
+              text=True,
+              check=True,
+          ).stdout.strip()
+          if existing:
+              fail(f"Tag {tag} already exists.")
+
+          print(f"current={current}")
+          print(f"version={next_version}")
+          print(f"tag={tag}")
+          PYEOF
+
+      - name: Report the plan
+        env:
+          CURRENT: ${{ steps.next.outputs.current }}
+          VERSION: ${{ steps.next.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### Fork-layer release"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Current version | \`${CURRENT}\` |"
+            echo "| Next version | \`${VERSION}\` |"
+            echo "| Dry run | \`${DRY_RUN}\` |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Bump the version files
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" pyproject.toml
+          sed -i "s/^__version__ = \".*\"/__version__ = \"${VERSION}\"/" \
+            src/netbox_mcp_server/__init__.py
+          # The lockfile records the project version. The Docker build runs
+          # `uv sync --locked` and fails if the lockfile is stale.
+          uv lock
+          git --no-pager diff --stat
+
+      - name: Commit, tag, and push
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml src/netbox_mcp_server/__init__.py uv.lock
+          git commit -m "chore(release): ${TAG}"
+          git tag "${TAG}"
+          git push origin main
+          # The tag push starts release-extended.yml and docker-publish.yml.
+          git push origin "${TAG}"
+          echo "Released ${TAG}." >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Report the dry run
+        if: ${{ inputs.dry_run }}
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          echo "Dry run: ${TAG} was computed but nothing was pushed." \
+            >> "${GITHUB_STEP_SUMMARY}"
