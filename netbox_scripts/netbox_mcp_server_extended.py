@@ -9,6 +9,9 @@ fire (NetBox skips event tracking on commit=false runs).
 
 The script refuses to run with commit=true — it is a validator, never a writer.
 Real writes go through the normal REST API with the caller's token permissions.
+
+NetBox deprecates custom scripts in 4.7 and plans to remove them in 5.0. Issue
+#39 of netbox-mcp-server-extended tracks the move to the replacement.
 """
 
 import json
@@ -17,7 +20,7 @@ from typing import Any
 from django.apps import apps
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models.deletion import ProtectedError, RestrictedError
 from extras.scripts import ChoiceVar, IntegerVar, Script, StringVar, TextVar
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -117,7 +120,10 @@ class MCPWriteValidator(Script):
         """Attempt the deletion inside the (rolled back) transaction."""
         label = f"{object_type} id={instance.pk} ({instance})"
         try:
-            instance.delete()
+            # Own savepoint: a database error must not poison NetBox's
+            # surrounding atomic block before the verdict is returned.
+            with transaction.atomic():
+                instance.delete()
         except (ProtectedError, RestrictedError) as e:
             return self._result(False, [f"Deletion blocked by dependent objects: {e}"])
         except AbortRequest as e:
@@ -146,7 +152,10 @@ class MCPWriteValidator(Script):
         if not serializer.is_valid():
             return self._result(False, self._flatten_errors(serializer.errors))
         try:
-            obj = serializer.save()
+            # Own savepoint: IntegrityError below is only recoverable when the
+            # failed statement is confined to an inner atomic block.
+            with transaction.atomic():
+                obj = serializer.save()
         except (DjangoValidationError, DRFValidationError, IntegrityError) as e:
             return self._result(False, [f"save() failed validation: {e}"])
         except AbortRequest as e:

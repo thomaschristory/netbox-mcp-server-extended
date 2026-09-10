@@ -9,12 +9,18 @@ that is always rolled back, so nothing persists and no webhooks fire.
 Dry runs fail closed: if the script is missing, the RQ worker is down, or the
 job cannot be confirmed, an error is raised — a dry run never falls back to
 executing the real write.
+
+NetBox deprecates custom scripts in 4.7 and plans to remove them in 5.0. Issue
+#39 tracks the move of this backend to the replacement mechanism. Keep the
+four guarantees above when you re-target it.
 """
 
 import json
+import pathlib
 import threading
 import time
 import uuid
+from importlib import resources
 from typing import Any
 
 import httpx
@@ -23,6 +29,40 @@ from netbox_mcp_server.netbox_client import NetBoxRestClient
 
 DRY_RUN_SCRIPT_DEFAULT = "netbox_mcp_server_extended.MCPWriteValidator"
 DRY_RUN_TIMEOUT_DEFAULT = 60.0
+SCRIPT_DOCS_URL = (
+    "https://github.com/thomaschristory/netbox-mcp-server-extended"
+    "/blob/main/netbox_scripts/README.md"
+)
+
+
+SCRIPT_FILENAME = "netbox_mcp_server_extended.py"
+
+
+def packaged_script_path() -> str:
+    """Locate the validator script that ships with this package.
+
+    The distribution carries a copy of the NetBox-side script, so an error
+    message can tell the user which file to install on the NetBox host. An
+    editable install resolves to the checkout instead, because hatchling
+    materializes the packaged copy only in a built wheel.
+
+    Returns:
+        The path of the validator script, or the documentation URL when
+        neither the package nor a checkout exposes a readable file.
+    """
+    try:
+        packaged = resources.files("netbox_mcp_server") / "netbox_scripts" / SCRIPT_FILENAME
+        if packaged.is_file():
+            return str(packaged)
+    except (ModuleNotFoundError, OSError):
+        pass
+
+    # Editable install or a plain checkout: src/netbox_mcp_server/ -> repo root.
+    checkout = pathlib.Path(__file__).resolve().parents[2] / "netbox_scripts" / SCRIPT_FILENAME
+    if checkout.is_file():
+        return str(checkout)
+    return SCRIPT_DOCS_URL
+
 
 _TERMINAL_JOB_STATUSES = {"completed", "errored", "failed"}
 
@@ -204,15 +244,16 @@ class NetBoxWriteClient:
             job_id = self._extract_job_id(response)
 
         job = self._wait_for_job(job_id)
-        return self._interpret_job(job, operation, object_type, nonce)
+        return self._interpret_job(job, operation, object_type, nonce, object_id)
 
     def _extract_job_id(self, response: httpx.Response) -> int:
         """Validate the script-run response and return the enqueued job's ID."""
         if response.status_code == 404:
             raise DryRunUnavailableError(
                 f"Dry-run script '{self._dry_run_script}' was not found: it is "
-                "not installed (see netbox_scripts/README.md) or the token "
-                "lacks the extras.run_script permission."
+                "not installed on the NetBox host, or the token lacks the "
+                "extras.run_script permission. Copy this file into SCRIPTS_ROOT "
+                f"on the NetBox host: {packaged_script_path()}"
             )
         if response.status_code == 403:
             raise DryRunUnavailableError(
@@ -289,9 +330,18 @@ class NetBoxWriteClient:
             time.sleep(self._poll_interval)
 
     def _interpret_job(
-        self, job: dict[str, Any], operation: str, object_type: str, nonce: str
+        self,
+        job: dict[str, Any],
+        operation: str,
+        object_type: str,
+        nonce: str,
+        object_id: int | None = None,
     ) -> dict[str, Any]:
-        """Turn a finished script job into a structured dry-run verdict."""
+        """Turn a finished script job into a structured dry-run verdict.
+
+        The verdict repeats ``object_id`` for update and delete, so a caller
+        can confirm the target before it repeats the call with dry_run=False.
+        """
         data = job.get("data")
         if not isinstance(data, dict):
             data = {}
@@ -322,22 +372,21 @@ class NetBoxWriteClient:
                 "NetBox is outdated. Nothing was written; retry."
             )
 
-        if verdict.get("valid"):
-            return {
-                "valid": True,
-                "operation": operation,
-                "object_type": object_type,
-                "detail": verdict.get("detail", ""),
-                "_dry_run": (
-                    "Validated by NetBox (executed with commit=false and rolled "
-                    "back — nothing was written). Call again with dry_run=False "
-                    "to execute."
-                ),
-            }
-        return {
-            "valid": False,
+        result: dict[str, Any] = {
+            "valid": bool(verdict.get("valid")),
             "operation": operation,
             "object_type": object_type,
-            "errors": verdict.get("errors", []),
-            "_dry_run": "Validation FAILED — nothing was written.",
+            "detail": verdict.get("detail", ""),
         }
+        if object_id is not None:
+            result["object_id"] = object_id
+        if result["valid"]:
+            result["_dry_run"] = (
+                "Validated by NetBox (executed with commit=false and rolled "
+                "back — nothing was written). Call again with dry_run=False "
+                "to execute."
+            )
+        else:
+            result["errors"] = verdict.get("errors", [])
+            result["_dry_run"] = "Validation FAILED — nothing was written."
+        return result

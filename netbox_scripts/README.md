@@ -24,7 +24,8 @@ writes always go through the normal REST API with the token's permissions.
   NetBox rejects script execution from read-only tokens even with commit=false
 - Custom scripts are deprecated in NetBox 4.7 and will be removed in 5.0
   (~May 2027) in favor of a dedicated plugin; this backend will need
-  re-targeting then
+  re-targeting then — tracked in
+  [issue #39](https://github.com/thomaschristory/netbox-mcp-server-extended/issues/39)
 
 ## Install
 
@@ -32,6 +33,13 @@ Copy the file into `SCRIPTS_ROOT` (default `$INSTALL_ROOT/netbox/scripts/`):
 
 ```sh
 cp netbox_mcp_server_extended.py /opt/netbox/netbox/scripts/netbox_mcp_server_extended.py
+```
+
+The distribution also carries a copy, so an install from PyPI does not need a
+checkout. This command prints its path:
+
+```sh
+python -c "from netbox_mcp_server.netbox_write_client import packaged_script_path; print(packaged_script_path())"
 ```
 
 or upload it via the REST API (NetBox 4.5.7+ / 4.6.0+ only; a one-time step —
@@ -57,6 +65,19 @@ permissions:
 - `view` on Extras > Script, Extras > Script Module, and Core > Managed File
 - `view` on Core > Job (`core.view_job`) — the server polls the script job
   for the verdict
+
+**Warning: constrain the `run` permission to this script.** An unconstrained
+`extras.run_script` permission lets the token run every script installed on that
+NetBox instance. That ability is much larger than create, update, and delete on
+the object types the MCP tools expose. In the permission for the `run` action,
+set this constraint:
+
+```json
+{ "name": "MCP Write Validator" }
+```
+
+NetBox then refuses a run of any other script with the same token. Apply the
+same idea to the `view` permissions if you keep them narrow.
 
 ## Configuration (MCP server side)
 
