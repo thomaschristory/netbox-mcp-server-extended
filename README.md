@@ -125,6 +125,17 @@ After adding, verify with `/mcp` in Claude Code — you should see `netbox_creat
 
 Releases follow PEP 440 post-release: `1.1.0.post1`, `1.1.0.post2`, etc.
 When upstream releases a new version, the `.post` counter resets: `1.2.0.post1`.
+The part before `.post` is the upstream release this fork is built on, so
+`1.2.1.post2` is the second fork-layer release on upstream `v1.2.1`.
+
+A merge to `main` does not publish anything. Maintainers release through one of
+two GitHub Actions workflows, and each one pushes a `v*.post*` tag that builds
+the GitHub Release, the PyPI package, and the GHCR image:
+
+- **Sync Upstream** — runs every Monday and on demand. It rebases the fork layer
+  onto a new upstream tag and resets the counter to `.post1`.
+- **Release Fork Layer** — run on demand when only the fork layer changed. It
+  increments the counter, for example `1.2.1.post1` to `1.2.1.post2`.
 
 ---
 
