@@ -213,6 +213,31 @@ Currently no automated test suite. When adding tests:
 
 ### Communication Style
 
+Write all English text in **ASD-STE100 Simplified Technical English**. This applies to
+docstrings, code comments, README and other documentation, commit messages, PR
+descriptions, issue text, log messages, and chat replies.
+
+Core STE rules:
+
+- **One word, one meaning**: Use each word with a single approved meaning. Use the same
+  word for the same thing every time. Do not use synonyms for variety.
+- **Simple tenses**: Use the simple present, simple past, or simple future. Do not use
+  the perfect or continuous tenses.
+- **Active voice**: Write "The server reads the token." Do not write "The token is read
+  by the server."
+- **Short sentences**: Maximum 20 words for an instruction, 25 words for a description.
+  One instruction per sentence.
+- **Short paragraphs**: Maximum 6 sentences.
+- **Keep the articles**: Write "the device", not "device".
+- **No -ing forms as verbs**: Write "Set the variable", not "Setting the variable".
+- **No noun clusters over 3 words**: Write "the timeout of the API token", not "the API
+  token timeout value".
+- **Warning first**: Put the condition or the warning before the instruction.
+- **No slang, no idioms, no jargon**: Technical terms from NetBox, MCP, and Python stay
+  as they are. Everything else uses plain words.
+
+Style rules that stay in effect:
+
 - **Be direct**: State what things ARE (avoid "This isn't X, it's Y" constructions)
 - **Be brief**: Optimize for reader comprehension, not writer expression
 - **Be clear**: Avoid defensive writing patterns and ambiguous language
