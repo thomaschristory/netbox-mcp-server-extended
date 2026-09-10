@@ -30,7 +30,7 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io/) server th
 ├── .github/workflows/            # CI/CD automation
 ├── pyproject.toml               # Dependencies and project metadata
 ├── README.md                    # User-facing documentation
-├── CHANGELOG.md                 # Auto-generated release notes
+├── CHANGELOG.md                 # Upstream history; fork releases are not added here
 └── LICENSE                      # Apache 2.0 license
 ```
 
