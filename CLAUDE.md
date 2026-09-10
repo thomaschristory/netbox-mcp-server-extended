@@ -30,7 +30,7 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io/) server th
 ├── .github/workflows/            # CI/CD automation
 ├── pyproject.toml               # Dependencies and project metadata
 ├── README.md                    # User-facing documentation
-├── CHANGELOG.md                 # Auto-generated release notes
+├── CHANGELOG.md                 # Upstream history; fork releases are not added here
 └── LICENSE                      # Apache 2.0 license
 ```
 
@@ -70,20 +70,24 @@ claude mcp add --transport stdio netbox \
 
 ## Version Management
 
-This project uses [python-semantic-release](https://python-semantic-release.readthedocs.io/) for automated version management. Versions are automatically determined from commit messages following [Conventional Commits](https://www.conventionalcommits.org/).
+This repository is a fork of [netboxlabs/netbox-mcp-server](https://github.com/netboxlabs/netbox-mcp-server). It adds a fork layer on top of an upstream release and keeps that upstream release visible in the version number.
 
-**Release triggers:**
+**Version scheme**: `<upstream-version>.postN`, a PEP 440 post-release. `1.2.1.post1` is the first fork-layer release on upstream `v1.2.1`. `UPSTREAM_VERSION` holds the upstream tag that `main` is rebased onto. Four files must always agree: `UPSTREAM_VERSION`, `pyproject.toml`, `src/netbox_mcp_server/__init__.py`, and `uv.lock`.
 
-- `feat:` commits trigger minor version bumps (1.0.0 → 1.1.0)
-- `fix:` and `perf:` commits trigger patch version bumps (1.0.0 → 1.0.1)
-- Commits with `BREAKING CHANGE:` in the body trigger major version bumps (1.0.0 → 2.0.0)
-- `docs:`, `test:`, `chore:`, `ci:`, `refactor:` commits are logged but don't trigger releases
+**A merge to `main` does not release anything.** The version does not come from commit messages. A `feat:` commit produces no version change. Conventional commits are still required, because they make the history readable, but they have no effect on the version.
 
-**Workflow:**
+Two workflows produce a release. Both end by pushing a `v*.post*` tag, which starts `release-extended.yml` (GitHub Release plus PyPI through Trusted Publisher) and `docker-publish.yml` (GHCR image).
 
-- Merge to `main` automatically triggers release analysis
-- If commits warrant a release, version is bumped and CHANGELOG updated
-- GitHub Release is created with auto-generated release notes
+| Situation | Workflow | Result |
+|---|---|---|
+| Upstream published a new release | `sync-upstream.yml` (Monday 06:00 UTC, or manual) | Rebases the fork layer onto the new upstream tag, resets the counter to `<new-upstream>.post1`, tags, and pushes |
+| Only the fork layer changed | `release-fork.yml` (manual) | Increments the counter, for example `1.2.1.post1` → `1.2.1.post2`, tags, and pushes |
+
+**To cut a fork-layer release**: merge the work to `main`, wait for Test & Lint to pass, then run the **Release Fork Layer** workflow. Use its `dry_run` input first if you want to see the computed version. The workflow stops if the version records disagree, if the tag exists, or if Test & Lint did not pass on the head of `main`.
+
+Both workflows need the `SYNC_TOKEN` secret, a fine-grained PAT for this repository. A tag pushed with the default `GITHUB_TOKEN` does not start another workflow, so the release would stop at the tag.
+
+**Do not add python-semantic-release back.** It parses versions as semver and cannot read a `.postN` tag. With no tag it can parse, it reads the history as empty and computes a downgrade. See issue #25.
 
 ## Code Standards
 
@@ -212,6 +216,31 @@ Currently no automated test suite. When adding tests:
 - **Issue-driven development**: Reference issues in commits and PRs
 
 ### Communication Style
+
+Write all English text in **ASD-STE100 Simplified Technical English**. This applies to
+docstrings, code comments, README and other documentation, commit messages, PR
+descriptions, issue text, log messages, and chat replies.
+
+Core STE rules:
+
+- **One word, one meaning**: Use each word with a single approved meaning. Use the same
+  word for the same thing every time. Do not use synonyms for variety.
+- **Simple tenses**: Use the simple present, simple past, or simple future. Do not use
+  the perfect or continuous tenses.
+- **Active voice**: Write "The server reads the token." Do not write "The token is read
+  by the server."
+- **Short sentences**: Maximum 20 words for an instruction, 25 words for a description.
+  One instruction per sentence.
+- **Short paragraphs**: Maximum 6 sentences.
+- **Keep the articles**: Write "the device", not "device".
+- **No -ing forms as verbs**: Write "Set the variable", not "Setting the variable".
+- **No noun clusters over 3 words**: Write "the timeout of the API token", not "the API
+  token timeout value".
+- **Warning first**: Put the condition or the warning before the instruction.
+- **No slang, no idioms, no jargon**: Technical terms from NetBox, MCP, and Python stay
+  as they are. Everything else uses plain words.
+
+Style rules that stay in effect:
 
 - **Be direct**: State what things ARE (avoid "This isn't X, it's Y" constructions)
 - **Be brief**: Optimize for reader comprehension, not writer expression

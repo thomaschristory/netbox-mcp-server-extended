@@ -114,7 +114,10 @@ jobs:
           git commit -m "chore: sync upstream to $NEW_TAG"
           sed -i "s/^version = \".*\"/version = \"$NEW_RELEASE\"/" pyproject.toml
           sed -i "s/^__version__ = \".*\"/__version__ = \"$NEW_RELEASE\"/" src/netbox_mcp_server/__init__.py
-          git add pyproject.toml src/netbox_mcp_server/__init__.py
+          # The lockfile records the project version. The Docker build runs
+          # `uv sync --locked` and fails if the lockfile is stale.
+          uv lock
+          git add pyproject.toml src/netbox_mcp_server/__init__.py uv.lock
           git commit -m "chore: bump version to $NEW_RELEASE"
           git tag "v${NEW_RELEASE}"
           # main was rewritten by the rebase above, so the push must be forced.
