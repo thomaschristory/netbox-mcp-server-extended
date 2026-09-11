@@ -48,7 +48,7 @@ This repository is a **write-enabled fork** of the read-only upstream server. Th
 uv sync
 
 # Run the server locally (requires env vars)
-NETBOX_URL=https://netbox.example.com/ NETBOX_TOKEN=<token> uv run netbox-mcp-server
+NETBOX_URL=https://netbox.example.com/ NETBOX_TOKEN=<token> uv run netbox-mcp-server-extended
 
 # Alternative: module execution
 uv run -m netbox_mcp_server
@@ -57,7 +57,7 @@ uv run -m netbox_mcp_server
 claude mcp add --transport stdio netbox \
   --env NETBOX_URL=https://netbox.example.com/ \
   --env NETBOX_TOKEN=<token> \
-  -- uv --directory /path/to/netbox-mcp-server run netbox-mcp-server
+  -- uv --directory /path/to/netbox-mcp-server run netbox-mcp-server-extended
 ```
 
 ## Development Philosophy

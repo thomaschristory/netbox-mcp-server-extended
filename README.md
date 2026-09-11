@@ -118,7 +118,7 @@ The write tools register automatically when the server starts — no extra flag 
 claude mcp add --transport stdio netbox \
   --env NETBOX_URL=https://netbox.example.com/ \
   --env NETBOX_TOKEN=<your-write-token> \
-  -- uv --directory /path/to/netbox-mcp-server-extended run netbox-mcp-server
+  -- uv --directory /path/to/netbox-mcp-server-extended run netbox-mcp-server-extended
 ```
 
 Or in a Claude Desktop / MCP client config file:
@@ -132,7 +132,7 @@ Or in a Claude Desktop / MCP client config file:
                 "--directory",
                 "/path/to/netbox-mcp-server-extended",
                 "run",
-                "netbox-mcp-server"
+                "netbox-mcp-server-extended"
             ],
             "env": {
                 "NETBOX_URL": "https://netbox.example.com/",
@@ -206,7 +206,7 @@ For chat, use cases, and general MCP discussion, join the NetBox community at [n
     pip install -e .
     ```
 
-3. Verify the server can run: `NETBOX_URL=https://netbox.example.com/ NETBOX_TOKEN=<your-api-token> uv run netbox-mcp-server`
+3. Verify the server can run: `NETBOX_URL=https://netbox.example.com/ NETBOX_TOKEN=<your-api-token> uv run netbox-mcp-server-extended`
 
 4. Add the MCP server to your LLM client. See below for some examples with Claude.
 
@@ -220,7 +220,7 @@ Add the server using the `claude mcp add` command:
 claude mcp add --transport stdio netbox \
   --env NETBOX_URL=https://netbox.example.com/ \
   --env NETBOX_TOKEN=<your-api-token> \
-  -- uv --directory /path/to/netbox-mcp-server run netbox-mcp-server
+  -- uv --directory /path/to/netbox-mcp-server run netbox-mcp-server-extended
 ```
 
 **Important notes:**
@@ -241,7 +241,7 @@ For HTTP transport, first start the server manually:
 NETBOX_URL=https://netbox.example.com/ \
 NETBOX_TOKEN=<your-api-token> \
 TRANSPORT=http \
-uv run netbox-mcp-server
+uv run netbox-mcp-server-extended
 ```
 
 Then add the running server to Claude Code:
@@ -271,7 +271,7 @@ Add the server configuration to your Claude Desktop config file. On Mac, edit `~
                 "--directory",
                 "/path/to/netbox-mcp-server",
                 "run",
-                "netbox-mcp-server"
+                "netbox-mcp-server-extended"
             ],
             "env": {
                 "NETBOX_URL": "https://netbox.example.com/",
@@ -360,7 +360,7 @@ For local Claude Desktop or Claude Code usage with stdio transport:
     "mcpServers": {
         "netbox": {
             "command": "uv",
-            "args": ["--directory", "/path/to/netbox-mcp-server", "run", "netbox-mcp-server"],
+            "args": ["--directory", "/path/to/netbox-mcp-server", "run", "netbox-mcp-server-extended"],
             "env": {
                 "NETBOX_URL": "https://netbox.example.com/",
                 "NETBOX_TOKEN": "<your-api-token>"
@@ -382,10 +382,10 @@ export TRANSPORT=http
 export HOST=127.0.0.1
 export PORT=8000
 
-uv run netbox-mcp-server
+uv run netbox-mcp-server-extended
 
 # Or using CLI arguments
-uv run netbox-mcp-server \
+uv run netbox-mcp-server-extended \
   --netbox-url https://netbox.example.com/ \
   --netbox-token <your-api-token> \
   --transport http \
@@ -426,11 +426,11 @@ LOG_LEVEL=INFO
 All configuration options can be overridden via CLI arguments:
 
 ```bash
-uv run netbox-mcp-server --help
+uv run netbox-mcp-server-extended --help
 
 # Common examples:
-uv run netbox-mcp-server --log-level DEBUG --no-verify-ssl  # Development
-uv run netbox-mcp-server --transport http --port 9000       # Custom HTTP port
+uv run netbox-mcp-server-extended --log-level DEBUG --no-verify-ssl  # Development
+uv run netbox-mcp-server-extended --transport http --port 9000       # Custom HTTP port
 ```
 
 ## Docker Usage
@@ -537,17 +537,17 @@ Set the `ENABLE_PLUGIN_DISCOVERY` environment variable or use the `--enable-plug
 
 ```bash
 # Via environment variable
-ENABLE_PLUGIN_DISCOVERY=true uv run netbox-mcp-server
+ENABLE_PLUGIN_DISCOVERY=true uv run netbox-mcp-server-extended
 
 # Via CLI flag
-uv run netbox-mcp-server --enable-plugin-discovery
+uv run netbox-mcp-server-extended --enable-plugin-discovery
 
 # In Claude Desktop config
 {
     "mcpServers": {
         "netbox": {
             "command": "uv",
-            "args": ["--directory", "/path/to/netbox-mcp-server", "run", "netbox-mcp-server"],
+            "args": ["--directory", "/path/to/netbox-mcp-server", "run", "netbox-mcp-server-extended"],
             "env": {
                 "NETBOX_URL": "https://netbox.example.com/",
                 "NETBOX_TOKEN": "<your-api-token>",
