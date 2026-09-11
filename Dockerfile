@@ -42,4 +42,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
-CMD ["netbox-mcp-server"]
+CMD ["netbox-mcp-server-extended"]
