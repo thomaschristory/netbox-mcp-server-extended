@@ -1,5 +1,5 @@
-# Dependabot keeps the SHA pins of the GitHub Actions in .github/workflows
-# current. It changes the SHA and the version comment together.
+# Dependabot keeps the SHA pins of the GitHub Actions in the workflows that
+# this fork owns current. It changes the SHA and the version comment together.
 #
 # renovate.json5 comes from upstream and stays identical to upstream, so that
 # a sync does not conflict. It extends the private netboxlabs/renovate preset,
@@ -9,13 +9,22 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    # These workflows have the same action pins as upstream. Upstream Renovate
+    # updates those pins, and Sync Upstream brings the updates to this fork. A
+    # Dependabot change to the same lines can stop the next sync rebase with a
+    # conflict.
+    exclude-paths:
+      - .github/workflows/container-rescan.yaml
+      - .github/workflows/container-scan.yaml
+      - .github/workflows/test.yml
     schedule:
       interval: weekly
       day: monday
       # Sync Upstream runs at 06:00 UTC on Monday and can rewrite main.
       time: "08:00"
       timezone: Etc/UTC
-    # Wait 7 days after an action release, as the upstream Renovate config does.
+    # Wait 7 days after an action release. Upstream set the same window for
+    # Renovate in netboxlabs/netbox-mcp-server#154.
     cooldown:
       default-days: 7
     groups:
