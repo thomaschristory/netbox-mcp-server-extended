@@ -465,9 +465,9 @@ docker run --rm \
 | `:latest` | Most recent build from the default branch |
 | `:main` | Latest build of the `main` branch |
 | `:sha-<short>` | Immutable build for a specific commit (e.g. `:sha-4f06758`) |
-| `:X.Y.Z`, `:X.Y`, `:X` | Semantic-version tags published on releases |
+| `:X.Y.Z.postN` | Release build (e.g. `:1.2.1.post3`), published when the `vX.Y.Z.postN` tag is pushed |
 
-Pin to a specific version or commit SHA in production — `:latest` and `:main` track the newest build and can change without notice.
+Pin to a release tag or a commit SHA in production — `:latest` and `:main` track the newest build and can change without notice. The image has no `:X.Y.Z`, `:X.Y`, or `:X` tags. A `.postN` release can contain breaking changes, so a tag that moves from one release to the next is not safe to pin.
 
 **Connecting to NetBox on your host machine:**
 
