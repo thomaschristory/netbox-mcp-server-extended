@@ -26,22 +26,17 @@ dev = [
     "pre-commit>=4.6.0",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
-    "python-semantic-release>=10.5.3",
     "ruff>=0.15.16",
 ]
 
 [tool.uv]
 # Security floors for transitive dependencies (see issue #6 and the container
-# scan). urllib3/gitpython/requests come via the python-semantic-release dev
-# chain; cryptography/pyjwt/starlette are runtime transitives (via fastmcp)
+# scan). cryptography/pyjwt/starlette are runtime transitives (via fastmcp)
 # flagged HIGH by the image scan; idna/pydantic-settings/python-dotenv/
 # pygments/pytest were flagged by Dependabot alerts. Constraints raise the
 # minimum patched version without declaring them as direct dependencies.
 constraint-dependencies = [
-    "urllib3>=2.7.0",
-    "gitpython>=3.1.50",
     "cryptography>=46.0.7",
-    "requests>=2.33.0",
     "pyjwt>=2.13.0",
     "starlette>=1.3.1",
     "idna>=3.15",
@@ -50,21 +45,6 @@ constraint-dependencies = [
     "pygments>=2.20.0",
     "pytest>=9.0.3",
 ]
-
-[tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
-version_variables = ["src/netbox_mcp_server/__init__.py:__version__"]
-branch = "main"
-upload_to_vcs_release = true
-tag_format = "v{version}"
-
-[tool.semantic_release.commit_parser_options]
-allowed_tags = ["feat", "fix", "docs", "chore", "refactor", "test", "ci", "perf"]
-minor_tags = ["feat"]
-patch_tags = ["fix", "perf"]
-
-[tool.semantic_release.changelog.default_templates]
-changelog_file = "CHANGELOG.md"
 
 [tool.ruff]
 line-length = 100
