@@ -45,6 +45,19 @@ jobs:
           cache-to: type=gha,mode=max
           tags: netbox-mcp-server:scan
 
+      - name: Check that the image starts its default command
+        # Exit codes 125 to 127 come from Docker, not from the server. Code 127
+        # means that the CMD executable is not in the image. Without NETBOX_URL
+        # the server starts and then exits 1.
+        run: |
+          set +e
+          docker run --rm netbox-mcp-server:scan
+          rc=$?
+          if [ "$rc" -ge 125 ]; then
+            echo "::error::The image cannot start its CMD (exit code $rc)."
+            exit 1
+          fi
+
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
