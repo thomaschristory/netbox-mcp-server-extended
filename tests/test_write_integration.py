@@ -21,6 +21,7 @@ from fastmcp import FastMCP
 
 from netbox_mcp_server import server
 from netbox_mcp_server.netbox_client import NetBoxRestClient
+from netbox_mcp_server.netbox_write_client import DryRunUnavailableError
 from netbox_mcp_server.write_tools import _last_registered, register_write_tools
 
 pytestmark = pytest.mark.skipif(
@@ -92,14 +93,19 @@ def throwaway_slug(live_client: NetBoxRestClient) -> str:
 
 
 class TestDryRun:
-    def test_dry_run_default_returns_flag_and_no_mutation(
+    def test_dry_run_default_returns_verdict_and_no_mutation(
         self, live_client: NetBoxRestClient, throwaway_slug: str
     ) -> None:
         create = _last_registered["netbox_create_object"]
 
-        result = create(TAG_TYPE, {"name": throwaway_slug, "slug": throwaway_slug})
+        try:
+            result = create(TAG_TYPE, {"name": throwaway_slug, "slug": throwaway_slug})
+        except DryRunUnavailableError as e:
+            # Dry runs need the MCPWriteValidator script and an RQ worker on the
+            # NetBox side; a stock container (as in CI) provides neither.
+            pytest.skip(f"dry-run infrastructure unavailable: {e}")
 
-        assert "_dry_run" in result
+        assert result["valid"] is True
         assert "dry_run=False" in result["_dry_run"]
         listing = server.netbox_get_objects(TAG_TYPE, {"slug": throwaway_slug})
         assert listing["count"] == 0

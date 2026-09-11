@@ -783,7 +783,7 @@ def main() -> None:
             verify_ssl=settings.verify_ssl,
         )
         logger.debug("NetBox client initialized successfully")
-        register_write_tools(mcp, netbox)
+        register_write_tools(mcp, netbox, settings)
     except Exception as e:
         logger.error(f"Failed to initialize NetBox client: {e}")
         sys.exit(1)

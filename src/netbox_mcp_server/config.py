@@ -8,6 +8,11 @@ from urllib.parse import urlparse
 from pydantic import AnyUrl, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from netbox_mcp_server.netbox_write_client import (
+    DRY_RUN_SCRIPT_DEFAULT,
+    DRY_RUN_TIMEOUT_DEFAULT,
+)
+
 
 class Settings(BaseSettings):
     """
@@ -54,6 +59,25 @@ class Settings(BaseSettings):
     # ===== Plugin Discovery Settings =====
     enable_plugin_discovery: bool = False
     """Whether to auto-discover plugin object types from NetBox at startup"""
+
+    # ===== Dry Run Settings =====
+    dry_run_script: str = Field(
+        default=DRY_RUN_SCRIPT_DEFAULT,
+        pattern=r"^\w+\.\w+$",
+        description=(
+            "NetBox custom script ('module.ClassName') executed with "
+            "commit=false to back write-tool dry runs. Install "
+            "netbox_scripts/netbox_mcp_server_extended.py on the NetBox host."
+        ),
+    )
+    """NetBox custom script backing write-tool dry runs"""
+
+    dry_run_timeout: float = Field(
+        default=DRY_RUN_TIMEOUT_DEFAULT,
+        gt=0,
+        description="Seconds to wait for a dry-run script job to finish.",
+    )
+    """Seconds to wait for a dry-run script job to finish"""
 
     # ===== Security Settings =====
     verify_ssl: bool = True
