@@ -1,6 +1,6 @@
 """NetBox MCP Server - Read-only MCP server for NetBox infrastructure data."""
 
-__version__ = "1.2.1.post3"
+__version__ = "1.2.1.post4"
 
 __all__ = ["NETBOX_OBJECT_TYPES", "NetBoxRestClient", "Settings"]
 
