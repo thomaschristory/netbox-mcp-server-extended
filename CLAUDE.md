@@ -2,7 +2,9 @@
 
 ## Core Concept
 
-A read-only [Model Context Protocol](https://modelcontextprotocol.io/) server that enables LLMs to interact with NetBox infrastructure data. Built with FastMCP and designed for use by NetBox operators.
+A [Model Context Protocol](https://modelcontextprotocol.io/) server that lets LLMs work with NetBox infrastructure data. It uses FastMCP and it serves NetBox operators.
+
+This repository is a **write-enabled fork** of the read-only upstream server. The read tools come from upstream. The fork layer adds three write tools: `netbox_create_object`, `netbox_update_object`, and `netbox_delete_object`. Every write tool defaults to `dry_run=True`.
 
 **Your role**: Help contributors design and implement features within the project's stated scope (see [CONTRIBUTING.md](CONTRIBUTING.md)). Challenge proposals that fall outside scope before implementation begins, not after. Ask clarifying questions and challenge assumptions when needed.
 
@@ -24,8 +26,11 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io/) server th
 │       ├── __main__.py          # Entry point for module execution
 │       ├── server.py            # Main MCP server with tool definitions
 │       ├── netbox_client.py     # NetBox REST API client abstraction
+│       ├── netbox_write_client.py # Real writes and script-backed dry runs (fork layer)
+│       ├── write_tools.py       # create/update/delete MCP tools (fork layer)
 │       ├── netbox_types.py      # NetBox object type mappings
 │       └── config.py            # Settings and logging configuration
+├── netbox_scripts/               # NetBox-side validator script for dry runs (fork layer)
 ├── tests/                        # Test suite
 ├── .github/workflows/            # CI/CD automation
 ├── pyproject.toml               # Dependencies and project metadata
@@ -134,7 +139,9 @@ def get_stuff(t, f):
 ### Architecture Patterns
 
 - **Abstraction layer**: `NetBoxClientBase` defines interface for future ORM implementation
-- **Read-only by design**: Only GET operations exposed; no create/update/delete tools
+- **Writes are explicit and reversible to preview**: The fork exposes create, update, and delete. Each tool defaults to `dry_run=True`
+- **NetBox validates a dry run, not this server**: A dry run runs the `MCPWriteValidator` custom script with `commit=false`. NetBox applies the change with its own REST serializers inside a transaction that it always rolls back
+- **A dry run fails closed**: If the script is missing, the RQ worker is down, or the job gives no verdict, the tool raises an error. A dry run never falls back to a real write
 - **Environment-based config**: All secrets via environment variables, never hardcoded
 - **Explicit object mapping**: `NETBOX_OBJECT_TYPES` dictionary maintains allowed types
 
@@ -146,6 +153,17 @@ def get_stuff(t, f):
 2. Include comprehensive docstring with args, return types, and examples
 3. Validate inputs before calling NetBox client
 4. Return structured data (dict or list); let FastMCP handle serialization
+
+### Adding or Changing a Write Tool
+
+Warning: a defect here can destroy NetBox data. Issue #34 is the precedent — a dry run
+executed the write it claimed to preview.
+
+1. Keep `dry_run: bool = True` as the default
+2. Route the dry run through `NetBoxWriteClient._dry_run()`. Do not invent a new preview mechanism
+3. Raise on any doubt. A dry run that cannot produce a verdict must not perform the write
+4. Validate `object_type` against `NETBOX_OBJECT_TYPES` before the call reaches NetBox
+5. Document the change in `README.md` and, when it touches the NetBox side, in `netbox_scripts/README.md`
 
 ### Tool Naming Convention
 
@@ -171,25 +189,38 @@ See `NETBOX_OBJECT_TYPES` in `server.py` for complete list.
 ## Environment Variables
 
 - `NETBOX_URL`: Base URL of NetBox instance (e.g., `https://netbox.example.com/`)
-- `NETBOX_TOKEN`: Read-only API token with appropriate permissions
+- `NETBOX_TOKEN`: API token. Use a read-only token for query-only use. The write tools need a write token
 - `LOG_LEVEL`: Logging verbosity (default: `INFO`, options: `DEBUG`, `WARNING`, `ERROR`)
+- `DRY_RUN_SCRIPT`: NetBox custom script that backs dry runs (default: `netbox_mcp_server_extended.MCPWriteValidator`)
+- `DRY_RUN_TIMEOUT`: Seconds to wait for a dry-run job (default: `60`)
+- `ENABLE_PLUGIN_DISCOVERY`: Auto-discover plugin object types at startup (default: `false`)
+
+`README.md` holds the full table, including the transport and HTTP authentication variables.
 
 ## Security Considerations
 
-- **Read-only tokens**: Always use read-only API tokens with minimal required permissions
+- **Prefer a read-only token**: Use a read-only token unless the deployment needs the write tools. A read-only token cannot change NetBox data
+- **Scope a write token narrowly**: Grant only the object permissions the deployment intends to change
+- **Constrain `extras.run_script`**: Dry runs need this permission. Constrain it to the `MCP Write Validator` script. An unconstrained permission lets the token run every script on that NetBox instance
+- **A valid dry run is not an authorization check**: The validator script reaches the ORM directly, so it does not apply object-level permissions. `valid: true` can precede a 403 on the real write
 - **No credential storage**: Tokens passed via environment, never stored or logged
 - **SSL verification**: Enabled by default in REST client
-- **No plugin support**: Deliberately excludes plugin object types to limit attack surface
+- **Plugin object types are opt-in**: `ENABLE_PLUGIN_DISCOVERY` is `false` by default. The default keeps the attack surface small
 - **Open source**: All code auditable; report security issues per SECURITY.md
 
 ## Testing Philosophy
 
-Currently no automated test suite. When adding tests:
+`tests/` holds the suite. Run it with `uv run pytest`. CI runs it on Python 3.11 to 3.14.
 
-- Test tool behavior with real NetBox instance (Docker-based test environment)
-- Mock external NetBox API calls only when necessary
+- Mock the NetBox API at the `httpx` layer; do not call a live instance in a unit test
+- `tests/test_write_integration.py` needs a live NetBox. It skips when the environment
+  variables are absent, and the dry-run test also skips when the validator script or the
+  RQ worker is missing
 - Validate error handling (invalid object types, missing credentials, API errors)
 - Test pagination handling for large result sets
+- **Cover the dry-run contract for any change to the write path**: a failed dry run must
+  raise, never fall back to a real write. `test_dry_run_never_falls_back_to_real_write`
+  is the guard
 
 ## Do Not
 
@@ -201,8 +232,9 @@ Currently no automated test suite. When adding tests:
 
 ### Code Quality
 
-- ❌ Add write operations (create/update/delete) without explicit project maintainer approval
-- ❌ Add support for plugin object types (scope limited to core NetBox)
+- ❌ Add a write tool that can bypass the dry-run path, or make a failed dry run fall back to a real write
+- ❌ Widen the write surface (bulk writes, raw endpoint access) without maintainer approval
+- ❌ Enable plugin discovery by default
 - ❌ Hardcode credentials or NetBox URLs
 - ❌ Bypass the `NetBoxClientBase` abstraction
 - ❌ Remove type hints or comprehensive docstrings
@@ -325,13 +357,13 @@ Style rules that stay in effect:
 
 - Exposes core NetBox functionality not currently accessible
 - Has clear use case for LLM-driven queries
-- Maintains read-only contract
+- Keeps the dry-run contract for any tool that changes data
 - Follows existing tool patterns
 
 ❌ **Don't add if**:
 
 - Duplicates existing tool functionality
-- Requires write operations
+- Changes data without a dry-run path
 - Only benefits niche use cases
 - Adds complexity without clear value
 
@@ -386,7 +418,7 @@ mcp_tool("netbox_get_changelogs", {
 
 **"Invalid object_type"**
 → Check `NETBOX_OBJECT_TYPES` dictionary for supported types
-→ Plugin object types are not supported
+→ Plugin object types need `ENABLE_PLUGIN_DISCOVERY=true`
 
 **"Connection refused" or timeout**
 → Verify NETBOX_URL is accessible and includes protocol (https://)
