@@ -1,13 +1,18 @@
 import json
+import pathlib
+import tomllib
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from netbox_mcp_server.netbox_client import NetBoxRestClient
 from netbox_mcp_server.netbox_write_client import (
+    SCRIPT_DOCS_URL,
+    SCRIPT_FILENAME,
     DryRunError,
     DryRunUnavailableError,
     NetBoxWriteClient,
+    packaged_script_path,
 )
 
 SCRIPT_URL = (
@@ -125,6 +130,54 @@ class TestDryRunFlow:
         assert result["errors"] == ["slug: This field is required."]
         assert "FAILED" in result["_dry_run"]
 
+    def test_verdict_repeats_object_id_for_update_and_delete(self, client, write_client):
+        """README tells the user to confirm the object_id before committing."""
+        post_resp = make_response(200, {"result": {"id": 7}})
+        with (
+            patch.object(client.session, "post", return_value=post_resp) as mock_post,
+            patch.object(client.session, "get") as mock_get,
+        ):
+            mock_get.side_effect = lambda url: job_response(
+                mock_post, detail="Would delete dcim.site id=5 (hq)"
+            )
+            deleted = write_client.delete("dcim/sites", "dcim.site", 5, dry_run=True)
+            updated = write_client.update("dcim/sites", "dcim.site", 5, {"name": "y"}, dry_run=True)
+
+        assert deleted["object_id"] == 5
+        assert deleted["detail"] == "Would delete dcim.site id=5 (hq)"
+        assert updated["object_id"] == 5
+
+    def test_create_verdict_has_no_object_id(self, client, write_client):
+        post_resp = make_response(200, {"result": {"id": 7}})
+        with (
+            patch.object(client.session, "post", return_value=post_resp) as mock_post,
+            patch.object(client.session, "get") as mock_get,
+        ):
+            mock_get.side_effect = lambda url: job_response(mock_post)
+            result = write_client.create("dcim/sites", "dcim.site", {"name": "x"}, dry_run=True)
+
+        assert "object_id" not in result
+
+    def test_invalid_verdict_keeps_detail_and_object_id(self, client, write_client):
+        """An invalid delete must still say which object it refused."""
+        post_resp = make_response(200, {"result": {"id": 7}})
+        with (
+            patch.object(client.session, "post", return_value=post_resp) as mock_post,
+            patch.object(client.session, "get") as mock_get,
+        ):
+            mock_get.side_effect = lambda url: job_response(
+                mock_post,
+                valid=False,
+                errors=["Deletion blocked by dependent objects"],
+                detail="Would delete dcim.site id=5 (hq)",
+            )
+            result = write_client.delete("dcim/sites", "dcim.site", 5, dry_run=True)
+
+        assert result["valid"] is False
+        assert result["object_id"] == 5
+        assert result["detail"] == "Would delete dcim.site id=5 (hq)"
+        assert result["errors"] == ["Deletion blocked by dependent objects"]
+
     def test_update_dry_run_sends_object_id(self, client, write_client):
         post_resp = make_response(200, {"result": {"id": 7}})
         with (
@@ -199,6 +252,32 @@ class TestDryRunFlow:
 
 
 class TestDryRunUnavailable:
+    def test_packaged_script_path_points_at_a_real_file(self):
+        """The 404 message must name a file the user actually has."""
+        path = packaged_script_path()
+        assert path != SCRIPT_DOCS_URL, "validator script not found in package or checkout"
+        assert "class MCPWriteValidator" in pathlib.Path(path).read_text()
+
+    def test_build_ships_the_validator_script(self):
+        """Guard the packaging: dry runs fail closed without this file (#39)."""
+        pyproject = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
+        config = tomllib.loads(pyproject.read_text())
+        wheel = config["tool"]["hatch"]["build"]["targets"]["wheel"]
+        included = wheel["force-include"]
+        assert f"netbox_scripts/{SCRIPT_FILENAME}" in included
+        assert included[f"netbox_scripts/{SCRIPT_FILENAME}"].startswith("netbox_mcp_server/")
+        sdist = config["tool"]["hatch"]["build"]["targets"]["sdist"]
+        assert "netbox_scripts" in sdist["include"]
+
+    def test_missing_script_names_the_local_copy(self, client, write_client):
+        resp = make_response(404, text="Not found.")
+        with (
+            patch.object(client.session, "post", return_value=resp),
+            pytest.raises(DryRunUnavailableError, match="SCRIPTS_ROOT") as excinfo,
+        ):
+            write_client.create("dcim/sites", "dcim.site", {"name": "x"}, dry_run=True)
+        assert packaged_script_path() in str(excinfo.value)
+
     def test_missing_script_404(self, client, write_client):
         resp = make_response(404, text="Not found.")
         with (

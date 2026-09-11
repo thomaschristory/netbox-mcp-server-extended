@@ -99,14 +99,16 @@ netbox_delete_object(
   with write ability — this also applies to dry runs.
 - Core custom scripts are deprecated in NetBox 4.7 and scheduled for removal
   in 5.0 (~May 2027); the dry-run backend will move to NetBox's replacement
-  plugin when it lands.
+  plugin when it lands. This is tracked as an open feature request in
+  [issue #39](https://github.com/thomaschristory/netbox-mcp-server-extended/issues/39).
 
 ### Safety guidance
 
 - **Use a read-only token unless you need writes.** The write tools require a NetBox token with write permissions; if you only query data, keep using a read-only token so the tools physically cannot change anything.
 - **Scope write tokens narrowly.** Grant only the object permissions you actually intend to modify.
-- **Always dry-run first.** Leave `dry_run=True` (the default) for the initial call, review the returned object, then repeat with `dry_run=False`. This is the recommended workflow for LLM-driven changes: the model proposes a change, you inspect the dry-run result, then approve the commit.
-- **Deletes are irreversible.** Confirm the `object_id` from a dry run before committing a delete.
+- **Always dry-run first.** Leave `dry_run=True` (the default) for the initial call, review the returned verdict (`valid`, `detail`, and `errors`), then repeat with `dry_run=False`. This is the recommended workflow for LLM-driven changes: the model proposes a change, you inspect the dry-run result, then approve the commit.
+- **Deletes are irreversible.** A dry run of an update or a delete repeats the `object_id` it validated, and `detail` names the object (e.g. `"Would delete dcim.device id=5 (core-sw-01)"`). Confirm both before you commit.
+- **A valid dry run is not an authorization check.** The validator script reaches the database directly, so it does not apply NetBox's object-level permissions. A dry run can return `valid: true` for a change that the real write then rejects with HTTP 403. The error direction is safe — the real write still enforces the token's permissions — but do not read `valid: true` as proof that the token may perform the change.
 
 ### Enabling write tools in Claude Code
 
