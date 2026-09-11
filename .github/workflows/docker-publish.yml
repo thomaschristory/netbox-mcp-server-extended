@@ -17,6 +17,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # cosign and actions/attest exchange the OIDC token of this workflow for
+      # a Sigstore certificate. attestations stores the provenance on GitHub.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout repository
@@ -57,6 +61,7 @@ jobs:
             type=sha,format=short
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -66,3 +71,39 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The steps below sign the pushed image index by its digest. Every tag of
+      # this build points to that digest. A pull request build pushes nothing,
+      # so it signs nothing.
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # Dependabot does not update this input. Update it by hand.
+          cosign-release: v3.1.3
+
+      - name: Sign the image with cosign (keyless)
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        # GHCR has no OCI referrers API. The default bundle format of cosign v3
+        # stores the signature as a referrer, and on GHCR `cosign verify` does
+        # not find it (sigstore/cosign#4641). --new-bundle-format=false writes
+        # the classic sha256-<digest>.sig tag instead. cosign refuses that
+        # format together with the signing config, so the config is disabled.
+        run: |
+          cosign sign --yes \
+            --new-bundle-format=false \
+            --use-signing-config=false \
+            "${IMAGE}@${DIGEST}"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          # Storage records exist only for organization accounts.
+          create-storage-record: false
