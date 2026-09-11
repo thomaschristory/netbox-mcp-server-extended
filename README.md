@@ -469,6 +469,22 @@ docker run --rm \
 
 Pin to a release tag or a commit SHA in production — `:latest` and `:main` track the newest build and can change without notice. The image has no `:X.Y.Z`, `:X.Y`, or `:X` tags. A `.postN` release can contain breaking changes, so a tag that moves from one release to the next is not safe to pin.
 
+**Verify an image:**
+
+The workflow signs each image that it pushes from `main` or from a release tag with [cosign](https://github.com/sigstore/cosign). The signature is keyless: it comes from the OIDC token of the GitHub Actions run. The workflow also attaches a SLSA build provenance attestation. Images built before signing was added have no signature and no attestation.
+
+```bash
+# Signature (cosign v3.1.3 or later)
+cosign verify \
+  --certificate-identity-regexp '^https://github\.com/thomaschristory/netbox-mcp-server-extended/\.github/workflows/docker-publish\.yml@refs/(heads/main|tags/v.+)$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/thomaschristory/netbox-mcp-server-extended:<tag>
+
+# Build provenance
+gh attestation verify oci://ghcr.io/thomaschristory/netbox-mcp-server-extended:<tag> \
+  --repo thomaschristory/netbox-mcp-server-extended
+```
+
 **Connecting to NetBox on your host machine:**
 
 If your NetBox instance is running on your host machine (not in a container), use `host.docker.internal` instead of `localhost` on macOS and Windows:
