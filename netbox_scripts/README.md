@@ -56,6 +56,9 @@ curl -X POST https://netbox.example.com/api/extras/scripts/upload/ \
 No worker or service restart is needed; NetBox re-reads the script from
 storage on each run.
 
+The script and the MCP server change together. When you upgrade the server,
+also copy the new script over the installed one.
+
 ## Permissions
 
 The MCP server's NetBox token needs, in addition to its normal object
@@ -77,7 +80,10 @@ set this constraint:
 ```
 
 NetBox then refuses a run of any other script with the same token. Apply the
-same idea to the `view` permissions if you keep them narrow.
+same idea to the `view` permissions if you keep them narrow. A constraint on
+`core.view_job` must still match the validator's jobs. NetBox answers 404, not
+403, for a job the token may not see. The MCP server treats that 404 as final
+and reports it at once.
 
 ## Configuration (MCP server side)
 

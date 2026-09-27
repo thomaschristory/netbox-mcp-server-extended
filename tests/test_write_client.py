@@ -315,6 +315,50 @@ class TestDryRunUnavailable:
         ):
             write_client.create("dcim/sites", "dcim.site", {"name": "x"}, dry_run=True)
 
+    def test_poll_404_fails_fast_and_names_the_view_constraint(self, client, write_client):
+        post_resp = make_response(200, {"result": {"id": 7}})
+        poll_resp = make_response(404, text="not found")
+        with (
+            patch.object(client.session, "post", return_value=post_resp),
+            patch.object(client.session, "get", return_value=poll_resp) as mock_get,
+            pytest.raises(DryRunUnavailableError, match="no job 7 to poll") as exc,
+        ):
+            write_client.create("dcim/sites", "dcim.site", {"name": "x"}, dry_run=True)
+        # Fails on the first poll instead of retrying until the deadline.
+        assert mock_get.call_count == 1
+        assert "core.view_job" in str(exc.value)
+
+    @pytest.mark.parametrize("status_code", [400, 401, 405])
+    def test_poll_client_error_fails_fast(self, client, write_client, status_code):
+        post_resp = make_response(200, {"result": {"id": 7}})
+        poll_resp = make_response(status_code, text="nope")
+        with (
+            patch.object(client.session, "post", return_value=post_resp),
+            patch.object(client.session, "get", return_value=poll_resp) as mock_get,
+            pytest.raises(DryRunUnavailableError, match=f"HTTP {status_code}"),
+        ):
+            write_client.create("dcim/sites", "dcim.site", {"name": "x"}, dry_run=True)
+        assert mock_get.call_count == 1
+
+    def test_transient_errors_are_retried_until_the_job_finishes(self, client, write_client):
+        post_resp = make_response(200, {"result": {"id": 7}})
+        earlier = iter(
+            [
+                make_response(502, text="bad gateway"),
+                make_response(408, text="request timeout"),
+                make_response(429, text="slow down"),
+                make_response(200, {"status": {"value": "running"}, "data": None}),
+            ]
+        )
+        with (
+            patch.object(client.session, "post", return_value=post_resp) as mock_post,
+            patch.object(client.session, "get") as mock_get,
+        ):
+            mock_get.side_effect = lambda url: next(earlier, None) or job_response(mock_post)
+            result = write_client.create("dcim/sites", "dcim.site", {"name": "x"}, dry_run=True)
+        assert result["valid"] is True
+        assert mock_get.call_count == 5
+
     def test_timeout_when_job_never_finishes(self, client):
         write_client = NetBoxWriteClient(client, dry_run_timeout=0.05, poll_interval=0.01)
         post_resp = make_response(200, {"result": {"id": 7}})

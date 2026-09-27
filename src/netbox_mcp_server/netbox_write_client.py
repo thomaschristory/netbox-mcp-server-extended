@@ -287,8 +287,9 @@ class NetBoxWriteClient:
     def _wait_for_job(self, job_id: int) -> dict[str, Any]:
         """Poll the NetBox job until it reaches a terminal status.
 
-        Transient failures are retried until the deadline; a 403 fails
-        immediately, since a missing permission will not resolve by waiting.
+        The client retries transient failures until the deadline. A 4xx other
+        than 408 and 429 fails at once: a permission problem or a missing job
+        does not resolve with time.
         """
         url = f"{self._client.api_url}/core/jobs/{job_id}/"
         deadline = time.monotonic() + self._dry_run_timeout
@@ -300,10 +301,23 @@ class NetBoxWriteClient:
             except httpx.HTTPError as e:
                 last_error = str(e)
             else:
-                if response.status_code == 403:
+                status = response.status_code
+                if status == 403:
                     raise DryRunUnavailableError(
                         "NetBox denied reading the dry-run job (403): the "
                         "token lacks the core.view_job permission."
+                    )
+                if status == 404:
+                    # NetBox answers 404, not 403, when an object permission
+                    # constraint hides the job from the token.
+                    raise DryRunUnavailableError(
+                        f"NetBox has no job {job_id} to poll (404). The usual "
+                        "cause is a constraint on the token's core.view_job "
+                        "permission that does not match this job."
+                    )
+                if 400 <= status < 500 and status not in (408, 429):
+                    raise DryRunUnavailableError(
+                        f"NetBox rejected the dry-run job poll (HTTP {status}): {response.text}"
                     )
                 if response.is_success:
                     try:

@@ -27,6 +27,9 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from utilities.api import get_serializer_for_model
 from utilities.exceptions import AbortRequest, AbortScript
 
+# Ways a serializer, a signal receiver, or the database can veto a write.
+_VETO_ERRORS = (DjangoValidationError, DRFValidationError, IntegrityError, AbortRequest)
+
 
 class MCPWriteValidator(Script):
     """Validate a single create/update/delete without persisting it."""
@@ -126,9 +129,8 @@ class MCPWriteValidator(Script):
                 instance.delete()
         except (ProtectedError, RestrictedError) as e:
             return self._result(False, [f"Deletion blocked by dependent objects: {e}"])
-        except AbortRequest as e:
-            # NetBox signal handlers (e.g. PROTECTION_RULES) veto deletes this way.
-            return self._result(False, [str(getattr(e, "message", e))])
+        except _VETO_ERRORS as e:
+            return self._result(False, self._error_messages(e))
         detail = f"Would delete {label}"
         self.log_success(detail)
         return self._result(True, [], detail)
@@ -156,29 +158,47 @@ class MCPWriteValidator(Script):
             # failed statement is confined to an inner atomic block.
             with transaction.atomic():
                 obj = serializer.save()
-        except (DjangoValidationError, DRFValidationError, IntegrityError) as e:
-            return self._result(False, [f"save() failed validation: {e}"])
-        except AbortRequest as e:
-            # e.g. assigning a tag that is restricted to other object types.
-            return self._result(False, [str(getattr(e, "message", e))])
+        except _VETO_ERRORS as e:
+            return self._result(False, self._error_messages(e))
 
         detail = f"Would {operation} {object_type} ({obj})"
         self.log_success(detail)
         return self._result(True, [], detail)
 
-    @staticmethod
-    def _flatten_errors(errors: Any) -> list[str]:
-        """Flatten DRF serializer errors into human-readable strings."""
-        flat: list[str] = []
+    @classmethod
+    def _error_messages(cls, e: Exception) -> list[str]:
+        """Turn a veto raised by save() or delete() into readable strings."""
+        if isinstance(e, DjangoValidationError):
+            if hasattr(e, "error_dict"):
+                return cls._flatten_errors(e.message_dict)
+            return list(e.messages)
+        if isinstance(e, DRFValidationError):
+            return cls._flatten_errors(e.detail)
+        if isinstance(e, IntegrityError):
+            return [f"Database constraint rejected the change: {e}"]
+        # AbortRequest carries its text in .message; NetBox signal handlers
+        # raise it for PROTECTION_RULES or a tag restricted to other types.
+        return [str(getattr(e, "message", None) or e)]
+
+    @classmethod
+    def _flatten_errors(cls, errors: Any, prefix: str = "") -> list[str]:
+        """Flatten nested serializer errors into "field.subfield: message" strings."""
         if isinstance(errors, dict):
-            for field, messages in errors.items():
-                if isinstance(messages, (list, tuple)):
-                    flat.extend(f"{field}: {message}" for message in messages)
-                else:
-                    flat.append(f"{field}: {messages}")
-        else:
-            flat.append(str(errors))
-        return flat
+            flat: list[str] = []
+            for field, value in errors.items():
+                flat.extend(cls._flatten_errors(value, f"{prefix}{field}."))
+            return flat
+        if isinstance(errors, (list, tuple)):
+            flat = []
+            for index, item in enumerate(errors):
+                item_prefix = prefix
+                if isinstance(item, dict) and prefix:
+                    item_prefix = f"{prefix.rstrip('.')}[{index}]."
+                flat.extend(cls._flatten_errors(item, item_prefix))
+            return flat
+        if prefix:
+            return [f"{prefix.rstrip('.')}: {errors}"]
+        return [str(errors)]
 
     def _result(self, valid: bool, errors: list[str], detail: str = "") -> str:
         """Emit the machine-readable verdict consumed by the MCP server."""
